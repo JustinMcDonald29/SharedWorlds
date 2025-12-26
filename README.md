@@ -160,7 +160,11 @@ It is highly recommended to use Intellij Idea for working on this project, [as s
 
 ### Build
 Building should be relatively straightforward, going to the build tab should initiate the build on it's own.  Build config is already set up, you'll just need to ensure you have the right JDKs set up: for Minecraft/Fabric 1.21.x that is [JDK 21](https://www.oracle.com/ca-en/java/technologies/downloads/#java21).
+![alt text](https://github.com/JustinMcDonald29/SharedWorlds/tree/master/README_images/idea_build.png "Build pane")
 - Set your JDK and Language Level to 21 under File->Project Structure
+![alt text](https://github.com/JustinMcDonald29/SharedWorlds/tree/master/README_images/idea_jdk.png "JDK selection")
 - Similarly set your JDK for Gradle to 21 under File->Settings
+![alt text](https://github.com/JustinMcDonald29/SharedWorlds/tree/master/README_images/idea_gradle.png "Gradle settings")
 ### Run
 Running is similarly simple, as long as the build completed successfully, pressing the run button with "Minecraft Client" selected will launch the game with the mod loaded.
+![alt text](https://github.com/JustinMcDonald29/SharedWorlds/tree/master/README_images/idea_run.png "Run button")
