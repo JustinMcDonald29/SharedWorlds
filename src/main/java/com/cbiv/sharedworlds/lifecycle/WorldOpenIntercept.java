@@ -1,5 +1,6 @@
-package com.cbiv.sharedworlds.mixin;
+package com.cbiv.sharedworlds.lifecycle;
 
+import com.cbiv.sharedworlds.WorldSessionContext;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.world.WorldListWidget;
 import net.minecraft.util.path.SymlinkValidationException;
@@ -56,6 +57,7 @@ public class WorldOpenIntercept {
 
             LOGGER.info("Attempting to open world: {}", level.getName());
             LOGGER.info("World path: {}", worldDir);
+            WorldSessionContext.setWorldDirectory(worldDir);
 
             /*
             This is a crude implementation for testing.  The current plan is actually to check if the selected
