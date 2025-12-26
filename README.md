@@ -112,8 +112,6 @@ A companion setup tool may be added later if needed.
 - **Sync Tools:** Google Drive, Syncthing, Dropbox, etc. (external)
 
 ## Roadmap
-### Phase 1 - Foundations
-## Roadmap
 
 ### Phase 1 — Foundations
 - [x] Fabric environment setup
