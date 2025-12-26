@@ -3,7 +3,7 @@
 **Minecraft Fabric client-side mod for cooperative, serialized world hosting**
 
 ---
-
+[Build and Run guide](#build-and-run)
 ## Overview
 
 This mod enables a **shared, turn-based hosting model** for Minecraft worlds without requiring a dedicated server or always-on host.
@@ -149,3 +149,18 @@ A companion setup tool may be added later if needed.
 - [ ] Improved logging and diagnostics
 - [ ] Documentation for setup and usage
 
+# Build and Run
+### IDE
+It is highly recommended to use Intellij Idea for working on this project, [as stated](https://docs.fabricmc.net/develop/getting-started/setting-up) by the Fabric creators themselves.  Within Idea it is recommended to use the [Minecraft Development](https://plugins.jetbrains.com/plugin/8327-minecraft-development) plugin.  
+
+### Guides and Reference
+[Fabric Developer Guides](https://docs.fabricmc.net/develop/)
+[Youtube Getting Started Guide](https://www.youtube.com/watch?v=oU8-qV-ZtUY) We won't follow the same project settings, but will give you an idea of what everything should look like
+[Generating Minecraft's Source Code](https://docs.fabricmc.net/develop/getting-started/generating-sources) Especially useful, can also be found at 11:50 in the Youtube guide.
+
+### Build
+Building should be relatively straightforward, going to the build tab should initiate the build on it's own.  Build config is already set up, you'll just need to ensure you have the right JDKs set up: for Minecraft/Fabric 1.21.x that is [JDK 21](https://www.oracle.com/ca-en/java/technologies/downloads/#java21).
+- Set your JDK and Language Level to 21 under File->Project Structure
+- Similarly set your JDK for Gradle to 21 under File->Settings
+### Run
+Running is similarly simple, as long as the build completed successfully, pressing the run button with "Minecraft Client" selected will launch the game with the mod loaded.
