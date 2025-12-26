@@ -1,10 +1,11 @@
 {
 	"required": true,
-	"package": "com.cbiv.sharedworlds.mixin",
+	"package": "com.cbiv.sharedworlds.lifecycle",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin",
-		"WorldOpenIntercept"
+		"WorldOpenIntercept",
+		"WorldCloseHandler",
+		"SessionCloseHandler"
 	],
 	"injectors": {
 		"defaultRequire": 1
