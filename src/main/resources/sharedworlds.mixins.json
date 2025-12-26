@@ -3,7 +3,8 @@
 	"package": "com.cbiv.sharedworlds.mixin",
 	"compatibilityLevel": "JAVA_21",
 	"mixins": [
-		"ExampleMixin"
+		"ExampleMixin",
+		"WorldOpenIntercept"
 	],
 	"injectors": {
 		"defaultRequire": 1
