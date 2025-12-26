@@ -118,27 +118,34 @@ A companion setup tool may be added later if needed.
 ### Phase 1 — Foundations
 - [x] Fabric environment setup
 - [x] Mod loads correctly
-- [ ] Read config file on startup
-- [ ] Log detected shared worlds
 
-### Phase 2 — World Access Control
+
+### Phase 2 - Basic Access Behaviour (fully local)
+- [x] Detection of lock file in local save
+- [ ] Intercept Play on local file
+- [ ] Detect lock file on close
+- [ ] Log lock information
+
+### Phase 3 - World Access Control (shared)
 - [ ] Intercept "Play Selected World"
 - [ ] Detect lock file
 - [ ] Display lock information to user
 - [ ] Prevent opening locked worlds
+- [ ] Read config file on startup
+- [ ] Log detected shared worlds
 
-### Phase 3 — Safe World Copying
+### Phase 4 - Safe World Copying
 - [ ] Copy shared world → local working directory
 - [ ] Create lock file on open
 - [ ] Open world from working copy
 
-### Phase 4 — Cleanup & Recovery
+### Phase 5 - Cleanup & Recovery
 - [ ] Copy working world back on exit
 - [ ] Remove lock file
 - [ ] Basic crash detection and recovery
 - [ ] Handle stale locks
 
-### Phase 5 — Polish
+### Phase 6 - Polish
 - [ ] Better UI messaging
 - [ ] Validation of shared world directories
 - [ ] Improved logging and diagnostics
