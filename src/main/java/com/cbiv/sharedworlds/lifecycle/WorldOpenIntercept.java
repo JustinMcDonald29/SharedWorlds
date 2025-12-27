@@ -1,5 +1,6 @@
 package com.cbiv.sharedworlds.lifecycle;
 
+import com.cbiv.sharedworlds.SharedWorldsClient;
 import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.client.MinecraftClient;
 import net.minecraft.client.gui.screen.world.WorldListWidget;
@@ -26,6 +27,8 @@ public class WorldOpenIntercept {
 
     @Unique
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldOpenIntercept");
+    @Unique
+    WorldRuntimeCoordinator coordinator = SharedWorldsClient.coordinator();
 
     @Final
     @Shadow
@@ -57,7 +60,7 @@ public class WorldOpenIntercept {
 
             LOGGER.info("Attempting to open world: {}", level.getName());
             LOGGER.info("World path: {}", worldDir);
-            WorldRuntimeCoordinator.setWorldDirectory(worldDir);
+            coordinator.beginWorldSession(worldDir);
 
             /*
             This is a crude implementation for testing.  The current plan is actually to check if the selected

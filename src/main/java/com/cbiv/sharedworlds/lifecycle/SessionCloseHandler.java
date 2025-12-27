@@ -1,5 +1,6 @@
 package com.cbiv.sharedworlds.lifecycle;
 
+import com.cbiv.sharedworlds.SharedWorldsClient;
 import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.world.level.storage.LevelStorage;
 //import org.spongepowered.asm.mixin.Final;
@@ -16,14 +17,18 @@ import java.nio.file.Path;
 @Mixin(LevelStorage.Session.class)
 public class SessionCloseHandler {
 
-    @Unique private static final Logger LOGGER = LoggerFactory.getLogger("SessionCloseHandler");
+    @Unique
+    private static final Logger LOGGER = LoggerFactory.getLogger("SessionCloseHandler");
+    @Unique
+    WorldRuntimeCoordinator coordinator = SharedWorldsClient.coordinator();
 
     @Inject(method = "close", at = @At("HEAD"))
     private void onSessionClose(CallbackInfo ci){
-        if(!WorldRuntimeCoordinator.isServerStarted()){ return; }
-        Path worldDir = WorldRuntimeCoordinator.getWorldDirectory();
-        if (worldDir != null){
-            WorldRuntimeCoordinator.clear();
+
+        if(!coordinator.isServerStarted()){ return; }
+        Path worldDir = coordinator.getWorldDirectory();
+        if (coordinator.isWorldActive()){
+            coordinator.endWorldSession();
             LOGGER.info("Session for world at {} closed", worldDir);
         }
 

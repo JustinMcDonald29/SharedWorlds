@@ -1,5 +1,6 @@
 package com.cbiv.sharedworlds.lifecycle;
 
+import com.cbiv.sharedworlds.SharedWorldsClient;
 import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.server.integrated.IntegratedServer;
 //import net.minecraft.world.World;
@@ -19,18 +20,22 @@ public class WorldCloseHandler {
 
     @Unique
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldCloseHandler");
+    @Unique
+    WorldRuntimeCoordinator coordinator = SharedWorldsClient.coordinator();
 
     @Inject(method = "setupServer", at = @At("TAIL"))
     private void onServerStarted(CallbackInfoReturnable<Boolean> cir){
+
         if (cir.getReturnValue()){
             LOGGER.info("IntegratedServer setup complete");
-            WorldRuntimeCoordinator.markServerStarted();
+            coordinator.onServerStarted();
         }
     }
 
     @Inject(method = "shutdown", at = @At("HEAD"))
     private void onServerShutdown(CallbackInfo ci){
         LOGGER.info("IntegratedServer shutting down");
+        coordinator.onServerStopping();
     }
 }
 
