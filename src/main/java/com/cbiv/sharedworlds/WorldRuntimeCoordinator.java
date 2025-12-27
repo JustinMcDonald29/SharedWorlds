@@ -2,7 +2,7 @@ package com.cbiv.sharedworlds;
 
 import java.nio.file.Path;
 
-public class WorldSessionContext {
+public class WorldRuntimeCoordinator {
     private static boolean serverStarted = false;
     private static Path worldDirectory;
 

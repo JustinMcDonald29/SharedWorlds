@@ -1,6 +1,6 @@
 package com.cbiv.sharedworlds.lifecycle;
 
-import com.cbiv.sharedworlds.WorldSessionContext;
+import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.world.level.storage.LevelStorage;
 //import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -20,10 +20,10 @@ public class SessionCloseHandler {
 
     @Inject(method = "close", at = @At("HEAD"))
     private void onSessionClose(CallbackInfo ci){
-        if(!WorldSessionContext.isServerStarted()){ return; }
-        Path worldDir = WorldSessionContext.getWorldDirectory();
+        if(!WorldRuntimeCoordinator.isServerStarted()){ return; }
+        Path worldDir = WorldRuntimeCoordinator.getWorldDirectory();
         if (worldDir != null){
-            WorldSessionContext.clear();
+            WorldRuntimeCoordinator.clear();
             LOGGER.info("Session for world at {} closed", worldDir);
         }
 

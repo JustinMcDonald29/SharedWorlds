@@ -1,6 +1,6 @@
 package com.cbiv.sharedworlds.lifecycle;
 
-import com.cbiv.sharedworlds.WorldSessionContext;
+import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.server.integrated.IntegratedServer;
 //import net.minecraft.world.World;
 //import org.spongepowered.asm.mixin.Final;
@@ -24,7 +24,7 @@ public class WorldCloseHandler {
     private void onServerStarted(CallbackInfoReturnable<Boolean> cir){
         if (cir.getReturnValue()){
             LOGGER.info("IntegratedServer setup complete");
-            WorldSessionContext.markServerStarted();
+            WorldRuntimeCoordinator.markServerStarted();
         }
     }
 
