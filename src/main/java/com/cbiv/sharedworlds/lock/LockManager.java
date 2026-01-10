@@ -40,6 +40,7 @@ public final class LockManager {
         this.playerName = identity.playerName();
         this.mcVersion = identity.mcVersion();
         this.modVersion = identity.modVersion();
+        LOGGER.info("LockManager created");
     }
 
     /* ------------------------------------------------------------

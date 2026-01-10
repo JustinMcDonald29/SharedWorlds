@@ -22,6 +22,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+/*
+Mixin hook to detect world launch attempts.
+Triggered by user pressing the "Play Selected World" button
+Note: does create a LevelStorage.Session temporarily to get
+what world is being launched
+ */
+
 @Mixin(WorldListWidget.WorldEntry.class)
 public class WorldOpenIntercept {
 
@@ -43,6 +50,11 @@ public class WorldOpenIntercept {
     logic to gray out the play button on "unplayable" worlds that we could hijack instead of play()
      */
 
+    /*
+    TODO See if it's feasible to move the logic elsewhere, turning this into a pure event signal.
+    I suspect it might have to stay this way, we'll need a mixin at some point anyway to know what
+    world the user is trying to launch, regardless it could be good to separate responsibility more
+    */
     @Inject(method = "play", at = @At("HEAD"))
     private void onPlaySelectedWorld(CallbackInfo ci) {
         LOGGER.info("World Launched");
