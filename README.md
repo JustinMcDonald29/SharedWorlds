@@ -121,8 +121,8 @@ A companion setup tool may be added later if needed.
 ### Phase 2 - Basic Access Behaviour (fully local)
 - [x] Detection of lock file in local save
 - [ ] Intercept Play on local file
-- [ ] Detect lock file on close
-- [ ] Log lock information
+- [x] Detect lock file on close
+- [x] Log lock information
 
 ### Phase 3 - World Access Control (shared)
 - [ ] Intercept "Play Selected World"
@@ -134,12 +134,12 @@ A companion setup tool may be added later if needed.
 
 ### Phase 4 - Safe World Copying
 - [ ] Copy shared world → local working directory
-- [ ] Create lock file on open
+- [x] Create lock file on open (local-only currently)
 - [ ] Open world from working copy
 
 ### Phase 5 - Cleanup & Recovery
 - [ ] Copy working world back on exit
-- [ ] Remove lock file
+- [x] Remove lock file (local-only currently)
 - [ ] Basic crash detection and recovery
 - [ ] Handle stale locks
 
