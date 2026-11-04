@@ -32,9 +32,27 @@ public class DirectoryWorldSource implements WorldSource{
 
     @Override
     public WorldMaterialization materialize() {
+        // A directory source is already a complete world folder, so nothing needs to be built.
+        // The returned directory IS the shared copy: callers must only copy from it, never
+        // move, modify or delete it.
+        return new WorldMaterialization() {
+            @Override
+            public Path worldDirectory() {
+                return root;
+            }
 
-        return () -> root;
+            @Override
+            public boolean isReusable() {
+                return true; // the directory persists, so it can be materialized from again
+            }
+
+            @Override
+            public void close() {
+                // Nothing to clean up: no temp files were created.
+            }
+        };
     }
+
     @Override
     public String describe() {
         return "directory:" + root;
