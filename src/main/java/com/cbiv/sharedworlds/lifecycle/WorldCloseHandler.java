@@ -3,6 +3,7 @@ package com.cbiv.sharedworlds.lifecycle;
 import com.cbiv.sharedworlds.SharedWorldsClient;
 import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
 import net.minecraft.server.integrated.IntegratedServer;
+import net.minecraft.util.WorldSavePath;
 //import net.minecraft.world.World;
 //import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
@@ -14,6 +15,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
+
+import java.nio.file.Path;
 
 @Mixin(IntegratedServer.class)
 public class WorldCloseHandler {
@@ -28,7 +31,8 @@ public class WorldCloseHandler {
 
         if (cir.getReturnValue()){
             LOGGER.info("IntegratedServer setup complete");
-            coordinator.onServerStarted();
+            Path worldDir = ((IntegratedServer) (Object) this).getSavePath(WorldSavePath.ROOT);
+            coordinator.onServerStarted(worldDir);
         }
     }
 
