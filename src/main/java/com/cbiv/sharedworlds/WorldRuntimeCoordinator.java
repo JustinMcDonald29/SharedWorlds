@@ -99,12 +99,11 @@ public class WorldRuntimeCoordinator {
         return this.serverStarted;
     }
 
+    /**
+     * Called when the integrated server starts shutting down. The world is NOT fully saved yet at this
+     * point, so the lock is kept: it is released in endWorldSession, once the session has closed.
+     */
     public void onServerStopping() {
-        if (this.serverHasRun && this.activeWorldDir != null) {
-            lockManager.deleteLock(this.activeWorldDir);
-        } else if (this.activeWorldDir == null) {
-            LOGGER.debug("activeWorldDir is null onServerStopping");
-        }
         this.serverStarted = false;
     }
 
@@ -114,6 +113,11 @@ public class WorldRuntimeCoordinator {
      * launch starts clean. The LockManager is kept: it lives for the whole client.
      */
     public void endWorldSession() {
+        if (this.serverHasRun && this.activeWorldDir != null) {
+            // TODO push the world back to its source here, before releasing the lock. The lock must only be
+            // released once the push has completed, so no one can pull a half-written world.
+            lockManager.deleteLock(this.activeWorldDir);
+        }
         resetSession();
         this.serverStarted = false;
     }
