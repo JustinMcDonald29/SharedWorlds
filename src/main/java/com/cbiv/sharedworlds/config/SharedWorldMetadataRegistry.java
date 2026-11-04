@@ -6,10 +6,14 @@ import com.cbiv.sharedworlds.fs.DirectoryWorldSource;
 import com.cbiv.sharedworlds.fs.WorldSource;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonParseException;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.Reader;
 import java.io.Writer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
@@ -120,31 +124,32 @@ public class SharedWorldMetadataRegistry {
     }
 
     /**
-     * Compares the local world with a source world to determine if the source is newer.
-     * Handles missing metadata gracefully by using the fallback to level.dat LastPlayed.
+     * Compares the local world with its source to determine if the source is newer.
+     * Handles missing source metadata gracefully by falling back to level.dat LastPlayed.
      *
-     * @param localWorldDir  Path to local world directory
-     * @param sourceWorldDir Path to source world directory
+     * @param localWorldDir Path to local world directory
+     * @param source        The world's source
      * @return true if the source world is newer and should be injected
      */
-    public boolean isSourceNewer(Path localWorldDir, Path sourceWorldDir) throws MetadataValidationException{
+    public boolean isSourceNewer(Path localWorldDir, WorldSource source) throws MetadataValidationException {
         SharedWorldMetadata localMetadata = worldRegistry.get(localWorldDir);
         SharedWorldMetadata sourceMetadata = null;
         LOGGER.info("Comparing local world {} against source {}",
                 localWorldDir,
-                sourceWorldDir);
-        Path sourceMetaFile = sourceWorldDir.resolve(SharedWorldsFiles.WORLD_METADATA);
-        if (Files.exists(sourceMetaFile)) {
-            try (Reader reader = Files.newBufferedReader(sourceMetaFile)) {
-                sourceMetadata = GSON.fromJson(reader, SharedWorldMetadata.class);
-            } catch (IOException e) {
-                // If source metadata can't be read, fallback to level.dat comparison
-                LOGGER.warn(
-                        "Source metadata missing for {}, falling back to level.dat comparison",
-                        sourceWorldDir
-                );
-                sourceMetadata = null;
+                source.describe());
+
+        try {
+            Optional<InputStream> metadataStream = source.openMetadata();
+            if (metadataStream.isPresent()) {
+                try (Reader reader = new InputStreamReader(metadataStream.get(), StandardCharsets.UTF_8)) {
+                    sourceMetadata = GSON.fromJson(reader, SharedWorldMetadata.class);
+                }
             }
+        } catch (IOException | JsonParseException e) {
+            // If source metadata can't be read, fall back to level.dat comparison
+            LOGGER.warn("Could not read source metadata for {}, falling back to level.dat comparison",
+                    source.describe(), e);
+            sourceMetadata = null;
         }
 
         if (localMetadata == null) {
@@ -160,10 +165,10 @@ public class SharedWorldMetadataRegistry {
             }
         }
 
-        boolean result = SharedWorldComparator.isSourceNewer(localWorldDir, localMetadata, sourceWorldDir, sourceMetadata);
+        boolean result = SharedWorldComparator.isSourceNewer(localWorldDir, localMetadata, source, sourceMetadata);
         LOGGER.info("World decision: local={}, source={}, inject={}",
                 localWorldDir.getFileName(),
-                sourceWorldDir,
+                source.describe(),
                 result);
         return result;
     }

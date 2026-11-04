@@ -10,6 +10,7 @@ import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
+import com.cbiv.sharedworlds.config.MetadataValidationException;
 import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
 
 public class WorldRuntimeCoordinator {
@@ -62,17 +63,23 @@ public class WorldRuntimeCoordinator {
         this.sourceWorld = source.get();
         LOGGER.info("World {} is shared, source: {}", worldName, sourceWorld.describe());
 
-        /*
-        * Remaining steps:
-        * if (source is locked) {
-        *   // world is locked, block launch -> return false
-        * }
-        * if (registry.isSourceNewer(worldDir, sourceWorld)) {
-        *   // Pass off to filesystem for world injection
-        * } else {
-        *   // local world is newer, launch local
-        * }
-        * */
+        // TODO 3. if the source is locked, block the launch (return false)
+
+        // 4. Decide which copy to run
+        boolean sourceIsNewer;
+        try {
+            sourceIsNewer = registry.isSourceNewer(worldDir, sourceWorld);
+        } catch (MetadataValidationException e) {
+            // Fail open: launch the local copy rather than risk overwriting it
+            LOGGER.error("Could not compare {} against its source, launching the local copy", worldName, e);
+            return true;
+        }
+        if (sourceIsNewer) {
+            // TODO pass off to the filesystem for world injection
+            LOGGER.info("Source for {} is newer; injection not implemented yet, launching the local copy", worldName);
+        } else {
+            LOGGER.info("Local copy of {} is up to date, launching it", worldName);
+        }
 
         // Crude local test, carried over from WorldOpenIntercept: locks currently live in the local world
         // folder, so this only logs and never blocks. Once locks live in the source, a locked world
