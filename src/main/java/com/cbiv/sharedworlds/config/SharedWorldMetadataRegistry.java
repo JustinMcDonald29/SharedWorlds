@@ -2,6 +2,8 @@ package com.cbiv.sharedworlds.config;
 
 import com.cbiv.sharedworlds.common.SharedWorldsFiles;
 import com.cbiv.sharedworlds.common.SharedWorldsSchemas;
+import com.cbiv.sharedworlds.fs.DirectoryWorldSource;
+import com.cbiv.sharedworlds.fs.WorldSource;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 
@@ -9,9 +11,11 @@ import java.io.IOException;
 import java.io.Reader;
 import java.io.Writer;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Unique;
@@ -77,6 +81,35 @@ public class SharedWorldMetadataRegistry {
         );
 
         worldRegistry.put(worldDir, metadata);
+    }
+
+    /**
+     * Builds the WorldSource for a world's source, as declared in its global config entry.
+     * This is the only place WorldSources are constructed.
+     *
+     * @return the source, or empty if the entry is incomplete or its type isn't supported yet
+     */
+    public Optional<WorldSource> getSource(GlobalSharedWorldConfig.Source source) {
+        if (source == null || source.type() == null
+                || source.location() == null || source.location().isBlank()) {
+            LOGGER.warn("Shared world source is missing its type or location: {}", source);
+            return Optional.empty();
+        }
+
+        return switch (source.type()) {
+            case DIRECTORY -> {
+                try {
+                    yield Optional.of(new DirectoryWorldSource(Path.of(source.location())));
+                } catch (InvalidPathException e) {
+                    LOGGER.warn("Invalid directory source location: {}", source.location(), e);
+                    yield Optional.empty();
+                }
+            }
+            default -> {
+                LOGGER.warn("Source type {} is not supported yet", source.type().id());
+                yield Optional.empty();
+            }
+        };
     }
 
     /**

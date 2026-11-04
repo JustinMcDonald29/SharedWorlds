@@ -1,5 +1,6 @@
 package com.cbiv.sharedworlds;
 
+import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.SharedWorldBootstrapper;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
@@ -26,25 +27,30 @@ public class SharedWorldsClient implements ClientModInitializer{
 
     @Override
     public void onInitializeClient() {
-        bootstrap();
+        GlobalSharedWorldConfig config = bootstrap();
         INSTANCE = this;
-        this.coordinator = createCoordinator();
+        this.coordinator = createCoordinator(config);
     }
 
     public static WorldRuntimeCoordinator coordinator() {
         return INSTANCE.coordinator;
     }
 
-    private void bootstrap(){
+    /**
+     * Runs the one-shot bootstrapper and returns the loaded config. On failure, returns an empty config:
+     * no worlds are treated as shared, so every world launches normally.
+     */
+    private GlobalSharedWorldConfig bootstrap(){
         try {
             Path configPath = resolveConfigPath();
             Path savesDir = resolveSavesDir();
 
-            new SharedWorldBootstrapper()
+            return new SharedWorldBootstrapper()
                     .bootstrap(configPath, savesDir);
 
         } catch (Exception e) {
             LOGGER.error("SharedWorlds failed to bootstrap", e);
+            return GlobalSharedWorldConfig.empty();
         }
 
     }
@@ -57,7 +63,7 @@ public class SharedWorldsClient implements ClientModInitializer{
         return FabricLoader.getInstance().getGameDir().resolve("saves");
     }
 
-    private WorldRuntimeCoordinator createCoordinator() {
+    private WorldRuntimeCoordinator createCoordinator(GlobalSharedWorldConfig config) {
         MinecraftClient client = MinecraftClient.getInstance();
 
         UUID instanceId = UUID.randomUUID();
@@ -77,6 +83,6 @@ public class SharedWorldsClient implements ClientModInitializer{
                 modVersion
         );
 
-        return new WorldRuntimeCoordinator(identity);
+        return new WorldRuntimeCoordinator(identity, config);
     }
 }

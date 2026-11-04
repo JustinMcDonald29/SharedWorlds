@@ -3,17 +3,20 @@ package com.cbiv.sharedworlds;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Optional;
 
 import com.cbiv.sharedworlds.fs.WorldSource;
 import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
+import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
 
 public class WorldRuntimeCoordinator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldRuntimeCoordinator");
     private final ClientIdentity identity;
+    private final GlobalSharedWorldConfig config;
 
     private boolean serverStarted = false;
     // True once the server for the active world has started, i.e. the world was actually played this session
@@ -23,8 +26,9 @@ public class WorldRuntimeCoordinator {
     private SharedWorldMetadataRegistry registry;
     private WorldSource sourceWorld;
 
-    public WorldRuntimeCoordinator(ClientIdentity id){
+    public WorldRuntimeCoordinator(ClientIdentity id, GlobalSharedWorldConfig config){
         this.identity = id;
+        this.config = config;
         this.lockManager = new LockManager(identity);
         this.registry = new SharedWorldMetadataRegistry();
     }
@@ -40,20 +44,33 @@ public class WorldRuntimeCoordinator {
         this.serverStarted = false;
         this.serverHasRun = false;
         this.sourceWorld = null;
+        String worldName = worldDir.getFileName().toString();
+
+        // 1. Not in this computer's config -> not a shared world, launch as normal
+        Optional<GlobalSharedWorldConfig.SharedWorldEntry> entry = config.findByLocalName(worldName);
+        if (entry.isEmpty()) {
+            LOGGER.debug("World {} is not shared", worldName);
+            return true;
+        }
+
+        // 2. Build its source. If that fails, fail open and launch the local copy
+        Optional<WorldSource> source = registry.getSource(entry.get().source());
+        if (source.isEmpty()) {
+            LOGGER.warn("Could not resolve the source for shared world {}, launching the local copy", worldName);
+            return true;
+        }
+        this.sourceWorld = source.get();
+        LOGGER.info("World {} is shared, source: {}", worldName, sourceWorld.describe());
+
         /*
-        * if(registry.isShared(worldDir){
-        *   this.sourceWorld = registry.getSource(worldDir)
-        * } else {
-        *   // This is not a shared world, the mod doesn't need to do anything, launch as normal
+        * Remaining steps:
+        * if (source is locked) {
+        *   // world is locked, block launch -> return false
         * }
-        * if(!this.lockmanager.isLocked(this.sourceWorld){
-        *   if(this.registry.isSourceNewer(worldDir, this.sourceWorld){
-        *       // Pass off to filesystem for world injection
-        *   } else {
-        *       // local world is newer, launch local
-        *   }
+        * if (registry.isSourceNewer(worldDir, sourceWorld)) {
+        *   // Pass off to filesystem for world injection
         * } else {
-        *   // world is locked, block launch
+        *   // local world is newer, launch local
         * }
         * */
 

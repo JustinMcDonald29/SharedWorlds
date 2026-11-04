@@ -43,8 +43,10 @@ public final class SharedWorldBootstrapper {
      * - Ensures sharedworld.meta.json exists for each configured world
      *
      * This method is intended to be called once during client initialization.
+     *
+     * @return the loaded global config, for use at runtime
      */
-    public void bootstrap(Path globalConfigPath, Path savesDir) throws IOException {
+    public GlobalSharedWorldConfig bootstrap(Path globalConfigPath, Path savesDir) throws IOException {
         LOGGER.info("Bootstrapping SharedWorlds configuration");
 
         GlobalSharedWorldConfig config = loadGlobalConfig(globalConfigPath);
@@ -55,6 +57,7 @@ public final class SharedWorldBootstrapper {
         }
 
         LOGGER.info("SharedWorlds bootstrap completed");
+        return config;
     }
 
     /**
