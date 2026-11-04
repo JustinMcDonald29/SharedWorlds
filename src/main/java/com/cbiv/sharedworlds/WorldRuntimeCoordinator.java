@@ -25,7 +25,13 @@ public class WorldRuntimeCoordinator {
         this.registry = new SharedWorldMetadataRegistry();
     }
 
-    public void beginWorldSession(Path worldDir) {
+    /**
+     * Called by WorldOpenIntercept before Minecraft opens an existing world.
+     *
+     * @return true if the launch should continue, false if it should be cancelled
+     *         (e.g. the world is locked by another player)
+     */
+    public boolean beginWorldSession(Path worldDir) {
         this.activeWorldDir = worldDir;
         this.serverStarted = false;
         /*
@@ -44,6 +50,15 @@ public class WorldRuntimeCoordinator {
         *   // world is locked, block launch
         * }
         * */
+
+        // Crude local test, carried over from WorldOpenIntercept: locks currently live in the local world
+        // folder, so this only logs and never blocks. Once locks live in the source, a locked world
+        // returns false here.
+        if (lockManager.isLocked(worldDir)) {
+            LOGGER.warn("LOCK FILE DETECTED for world {}", worldDir.getFileName());
+        }
+
+        return true;
     }
 
 

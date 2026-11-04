@@ -1,10 +1,10 @@
 package com.cbiv.sharedworlds.lifecycle;
 
 import com.cbiv.sharedworlds.SharedWorldsClient;
-import com.cbiv.sharedworlds.WorldRuntimeCoordinator;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.screen.world.WorldListWidget;
-import net.minecraft.util.path.SymlinkValidationException;
+import net.minecraft.server.integrated.IntegratedServerLoader;
+import net.minecraft.world.level.storage.LevelStorage;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
@@ -12,78 +12,56 @@ import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import net.minecraft.world.level.storage.LevelStorage;
-//import net.minecraft.world.level.storage.LevelStorageException;
-import net.minecraft.world.level.storage.LevelSummary;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 
 /*
-Mixin hook to detect world launch attempts.
-Triggered by user pressing the "Play Selected World" button
-Note: does create a LevelStorage.Session temporarily to get
-what world is being launched
- */
+Mixin hook to detect, and gate, launches of existing worlds.
 
-@Mixin(WorldListWidget.WorldEntry.class)
+Hooks IntegratedServerLoader.start(String, Runnable), which every launch of an existing world goes through:
+the world list's "Play Selected World" button (WorldListWidget.WorldEntry.play()) and Quick Play
+(--quickPlaySingleplayer). Creating a new world uses a different method (createAndStart), so it never
+reaches this hook.
+
+The hook runs before Minecraft opens a LevelStorage.Session, so the world folder is untouched and
+session.lock is not held yet: this is the point where a shared world can be swapped in.
+
+WorldRuntimeCoordinator.beginWorldSession decides whether the launch may continue:
+  true  -> continue launching as normal (not shared, local copy is current, or injection succeeded)
+  false -> cancel the launch and return the player to the previous screen via onCancel
+ */
+@Mixin(IntegratedServerLoader.class)
 public class WorldOpenIntercept {
 
     @Unique
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldOpenIntercept");
-    @Unique
-    WorldRuntimeCoordinator coordinator = SharedWorldsClient.coordinator();
 
-    @Final
     @Shadow
-    LevelSummary level;
-
     @Final
-    @Shadow
-    private MinecraftClient client;
+    private LevelStorage storage;
 
-    /*
-    Exact method to inject into is subject to change: Minecraft seems like it may have existing
-    logic to gray out the play button on "unplayable" worlds that we could hijack instead of play()
-     */
+    @Inject(method = "start(Ljava/lang/String;Ljava/lang/Runnable;)V", at = @At("HEAD"), cancellable = true)
+    private void onStartExistingWorld(String levelName, Runnable onCancel, CallbackInfo ci) {
+        Path worldDir = this.storage.getSavesDirectory().resolve(levelName);
+        LOGGER.info("Attempting to open world: {}", levelName);
+        LOGGER.info("World path: {}", worldDir);
 
-    /*
-    TODO See if it's feasible to move the logic elsewhere, turning this into a pure event signal.
-    I suspect it might have to stay this way, we'll need a mixin at some point anyway to know what
-    world the user is trying to launch, regardless it could be good to separate responsibility more
-    */
-    @Inject(method = "play", at = @At("HEAD"))
-    private void onPlaySelectedWorld(CallbackInfo ci) {
-        LOGGER.info("World Launched");
+        boolean allowLaunch;
+        try {
+            allowLaunch = SharedWorldsClient.coordinator().beginWorldSession(worldDir);
+        } catch (Exception e) {
+            // Fail open: a SharedWorlds error must never crash the game or block a world.
+            LOGGER.error("SharedWorlds launch check failed for {}, launching normally", levelName, e);
+            allowLaunch = true;
+        }
 
-        LevelStorage levelStorage = client.getLevelStorage();
-        String levelName = level.getName();
-
-        try (LevelStorage.Session session = levelStorage.createSession(levelName)) {
-
-            Path savesDir = MinecraftClient.getInstance()
-                    .getLevelStorage()
-                    .getSavesDirectory();
-            Path worldDir = savesDir.resolve(session.getDirectoryName());
-            Path lockFile = worldDir.resolve("lock.json");
-
-            LOGGER.info("Attempting to open world: {}", level.getName());
-            LOGGER.info("World path: {}", worldDir);
-            coordinator.beginWorldSession(worldDir);
-
-            /*
-            This is a crude implementation for testing.  The current plan is actually to check if the selected
-            world has a counterpart in the shared directory, and check if that counterpart is locked.
-            Regardless this will serve for testing locking and unlocking behaviour in vitro
-             */
-            if (Files.exists(lockFile)) {
-                LOGGER.warn("LOCK FILE DETECTED for world {}", level.getName());
-            }
-        } catch (IOException | SymlinkValidationException e) {
-            LOGGER.error("Failed to access world directory", e);
+        if (!allowLaunch) {
+            LOGGER.info("Launch of {} cancelled by SharedWorlds", levelName);
+            ci.cancel();
+            // onCancel is Minecraft's own way back: it refreshes the world list, or returns to the
+            // title screen for Quick Play.
+            // TODO show the lock screen instead, and run onCancel when the player closes it
+            onCancel.run();
         }
     }
 }
