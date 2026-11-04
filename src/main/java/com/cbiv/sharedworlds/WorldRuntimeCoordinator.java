@@ -1,9 +1,12 @@
 package com.cbiv.sharedworlds;
 
 import java.nio.file.Path;
+
+import com.cbiv.sharedworlds.fs.WorldSource;
 import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
+import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
 
 public class WorldRuntimeCoordinator {
 
@@ -13,17 +16,36 @@ public class WorldRuntimeCoordinator {
     private boolean serverStarted = false;
     private Path activeWorldDir;
     private LockManager lockManager;
+    private SharedWorldMetadataRegistry registry;
+    private WorldSource sourceWorld;
 
     public WorldRuntimeCoordinator(ClientIdentity id){
         this.identity = id;
         this.lockManager = new LockManager(identity);
+        this.registry = new SharedWorldMetadataRegistry();
     }
 
     public void beginWorldSession(Path worldDir) {
         this.activeWorldDir = worldDir;
         this.serverStarted = false;
-        //this.lockManager = new LockManager(identity);
+        /*
+        * if(registry.isShared(worldDir){
+        *   this.sourceWorld = registry.getSource(worldDir)
+        * } else {
+        *   // This is not a shared world, the mod doesn't need to do anything, launch as normal
+        * }
+        * if(!this.lockmanager.isLocked(this.sourceWorld){
+        *   if(this.registry.isSourceNewer(worldDir, this.sourceWorld){
+        *       // Pass off to filesystem for world injection
+        *   } else {
+        *       // local world is newer, launch local
+        *   }
+        * } else {
+        *   // world is locked, block launch
+        * }
+        * */
     }
+
 
     public Path getWorldDirectory() {
         return this.activeWorldDir;
