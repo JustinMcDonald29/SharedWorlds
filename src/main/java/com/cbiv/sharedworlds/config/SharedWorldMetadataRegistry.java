@@ -117,6 +117,14 @@ public class SharedWorldMetadataRegistry {
     }
 
     /**
+     * Drops the cached metadata for a world directory, e.g. after its folder was replaced by an injection.
+     * The next lookup reloads it from disk.
+     */
+    public void forget(Path worldDir) {
+        worldRegistry.remove(worldDir);
+    }
+
+    /**
      * Returns cached metadata for a given world directory, or null if not loaded.
      */
     public SharedWorldMetadata get(Path worldDir) {

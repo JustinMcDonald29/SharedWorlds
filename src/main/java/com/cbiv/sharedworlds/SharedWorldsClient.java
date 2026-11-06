@@ -2,6 +2,7 @@ package com.cbiv.sharedworlds;
 
 import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.SharedWorldBootstrapper;
+import com.cbiv.sharedworlds.fs.WorldInjector;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.SharedConstants;
@@ -83,6 +84,10 @@ public class SharedWorldsClient implements ClientModInitializer{
                 modVersion
         );
 
-        return new WorldRuntimeCoordinator(identity, config);
+        // Staging and backup folders sit next to saves/ (same drive, so the injector's renames are atomic)
+        // but outside it, so they never show up in the world list.
+        WorldInjector injector = new WorldInjector(FabricLoader.getInstance().getGameDir().resolve("sharedworlds"));
+
+        return new WorldRuntimeCoordinator(identity, config, injector);
     }
 }

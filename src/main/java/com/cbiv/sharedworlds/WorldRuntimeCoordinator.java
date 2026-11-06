@@ -5,6 +5,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 
+import com.cbiv.sharedworlds.fs.WorldInjector;
+import com.cbiv.sharedworlds.fs.WorldMaterialization;
 import com.cbiv.sharedworlds.fs.WorldSource;
 import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
@@ -18,6 +20,7 @@ public class WorldRuntimeCoordinator {
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldRuntimeCoordinator");
     private final ClientIdentity identity;
     private final GlobalSharedWorldConfig config;
+    private final WorldInjector injector;
 
     private boolean serverStarted = false;
     // True once the server for the active world has started, i.e. the world was actually played this session
@@ -27,9 +30,10 @@ public class WorldRuntimeCoordinator {
     private SharedWorldMetadataRegistry registry;
     private WorldSource sourceWorld;
 
-    public WorldRuntimeCoordinator(ClientIdentity id, GlobalSharedWorldConfig config){
+    public WorldRuntimeCoordinator(ClientIdentity id, GlobalSharedWorldConfig config, WorldInjector injector){
         this.identity = id;
         this.config = config;
+        this.injector = injector;
         this.lockManager = new LockManager(identity);
         this.registry = new SharedWorldMetadataRegistry();
     }
@@ -75,8 +79,8 @@ public class WorldRuntimeCoordinator {
             return true;
         }
         if (sourceIsNewer) {
-            // TODO pass off to the filesystem for world injection
-            LOGGER.info("Source for {} is newer; injection not implemented yet, launching the local copy", worldName);
+            // TODO once locks live in the source, only inject after the lock has been taken (step 3)
+            injectSource(worldDir, worldName);
         } else {
             LOGGER.info("Local copy of {} is up to date, launching it", worldName);
         }
@@ -91,6 +95,25 @@ public class WorldRuntimeCoordinator {
         return true;
     }
 
+
+    /**
+     * Replaces the local copy with the source. Fails open: on any error the local copy is left as it was
+     * (WorldInjector guarantees this) and launched instead.
+     */
+    private void injectSource(Path worldDir, String worldName) {
+        LOGGER.info("Source for {} is newer, injecting it from {}", worldName, sourceWorld.describe());
+        try (WorldMaterialization materialized = sourceWorld.materialize()) {
+            WorldInjector.InjectionResult result = injector.inject(materialized.worldDirectory(), worldDir);
+            LOGGER.info("Injected {}; previous local copy: {}", worldName,
+                    result.backup().map(Path::toString).orElse("none"));
+        } catch (IOException | RuntimeException e) {
+            LOGGER.error("Could not inject {} from {}, launching the local copy",
+                    worldName, sourceWorld.describe(), e);
+        } finally {
+            // The local folder may have been replaced, so its cached metadata is stale either way
+            registry.forget(worldDir);
+        }
+    }
 
     public Path getWorldDirectory() {
         return this.activeWorldDir;
