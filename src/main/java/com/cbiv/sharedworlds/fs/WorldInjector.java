@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 /**
  * Replaces the local copy of a shared world in saves/ with a materialized copy of its source.
@@ -38,23 +39,11 @@ public final class WorldInjector {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldInjector");
 
-    /** Top-level entries copied from the source (decision log, "What to copy on pull"). */
-    public static final List<String> PULL_ENTRIES = List.of(
-            "level.dat",
-            "region",
-            "entities",
-            "DIM-1",
-            "DIM1",
-            "dimensions",
-            "data",
-            "datapacks",
-            "poi",
-            "playerdata",
-            "advancements",
-            "stats",
-            SharedWorldsFiles.WORLD_METADATA
-    );
-    // Never copied: session.lock, level.dat_old, lock.json (anything not listed above is skipped).
+    /** Top-level entries copied from the source: the synced world files, plus the metadata. */
+    public static final List<String> PULL_ENTRIES = Stream.concat(
+            WorldBlueprint.WORLD_ENTRIES.stream(),
+            Stream.of(SharedWorldsFiles.WORLD_METADATA)
+    ).toList();
 
     private static final DateTimeFormatter BACKUP_STAMP = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss");
 

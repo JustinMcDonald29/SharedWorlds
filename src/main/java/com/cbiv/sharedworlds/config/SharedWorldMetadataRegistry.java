@@ -177,6 +177,15 @@ public class SharedWorldMetadataRegistry {
     }
 
     /**
+     * The bytes of a metadata file, e.g. for writing it to a source. Null fields (such as pendingPushId in the
+     * metadata a push writes) are left out.
+     */
+    public byte[] serialize(SharedWorldMetadata metadata) throws MetadataValidationException {
+        validate(metadata, "metadata to write");
+        return GSON.toJson(metadata).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
      * Builds the WorldSource for a world's source, as declared in its global config entry.
      * This is the only place WorldSources are constructed.
      *

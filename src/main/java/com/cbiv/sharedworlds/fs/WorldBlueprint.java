@@ -1,5 +1,7 @@
 package com.cbiv.sharedworlds.fs;
 
+import java.util.List;
+
 /*
 Early idea for a system to ensure compatibility with other mods.  For security reasons world folders will be built from
 specific parts, rather than trusting a given source and downloading an entire directory.  i.e. For a vanilla
@@ -16,4 +18,28 @@ thus (likely) requiring another DIM\.
  */
 
 public class WorldBlueprint {
+
+    /**
+     * Top-level entries of a world folder that are synced, both when pulling and pushing (decision log, "What to
+     * copy on pull"). Never synced: session.lock, level.dat_old, lock.json, and anything not listed.
+     * sharedworld.meta.json is handled separately: it's written last on push.
+     *
+     * TODO extend with mod rules (decision 7)
+     */
+    public static final List<String> WORLD_ENTRIES = List.of(
+            "level.dat",
+            "region",
+            "entities",
+            "DIM-1",
+            "DIM1",
+            "dimensions",
+            "data",
+            "datapacks",
+            "poi",
+            "playerdata",
+            "advancements",
+            "stats"
+    );
+
+    private WorldBlueprint() {}
 }
