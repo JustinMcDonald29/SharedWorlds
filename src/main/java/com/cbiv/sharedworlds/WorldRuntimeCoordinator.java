@@ -9,6 +9,7 @@ import com.cbiv.sharedworlds.common.SharedWorldsFiles;
 import com.cbiv.sharedworlds.fs.WorldBlueprint;
 import com.cbiv.sharedworlds.fs.WorldInjector;
 import com.cbiv.sharedworlds.fs.WorldMaterialization;
+import com.cbiv.sharedworlds.fs.PlayerDataRewriter;
 import com.cbiv.sharedworlds.fs.WorldSource;
 import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
@@ -124,6 +125,16 @@ public class WorldRuntimeCoordinator {
                 LOGGER.warn("Could not compare {} with its source; launching the local copy without the lock",
                         worldName);
                 releaseLock();
+            }
+        }
+
+        if (this.holdsLock) {
+            // 5. Whoever hosts must load their own player, not the previous host's (see PlayerDataRewriter)
+            try {
+                PlayerDataRewriter.detachHostPlayer(worldDir);
+            } catch (IOException | RuntimeException e) {
+                LOGGER.error("Could not remove the previous host's player from {}; you may load in with their "
+                        + "inventory and position", worldName, e);
             }
         }
         return true;
