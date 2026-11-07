@@ -66,7 +66,16 @@ public final class SharedWorldComparator {
                 localVersion, local.unpushed(), sourceVersion);
 
         if (sourceVersion > localVersion) {
-            return local.unpushed() ? WorldDecision.DIVERGED : WorldDecision.PULL;
+            if (!local.unpushed()) {
+                return WorldDecision.PULL;
+            }
+            if (sourceVersion == localVersion + 1 && local.pendingPushId() != null
+                    && local.pendingPushId().equals(source.lastPushId())) {
+                LOGGER.info("Source version {} is this computer's own push {}, which finished but wasn't recorded",
+                        sourceVersion, source.lastPushId());
+                return WorldDecision.OWN_PUSH_LANDED;
+            }
+            return WorldDecision.DIVERGED;
         }
         if (sourceVersion < localVersion) {
             // The source went backwards (e.g. restored from a backup). Never pull an older version over a newer one.

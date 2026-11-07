@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -136,6 +137,46 @@ public class SharedWorldMetadataRegistry {
     }
 
     /**
+     * Step 1 of a push: works out the next version and records locally that this push is in flight.
+     *
+     * A push must run these steps in this order:
+     *  1. beginPush (before copying anything)
+     *  2. copy the world's files to the source
+     *  3. write the returned metadata to the source LAST, so the source's version only goes up once its files
+     *     are complete. Never copy the local sharedworld.meta.json instead: it has the old version and the
+     *     local-only pendingPushId
+     *  4. completePush
+     * Stopping before step 3 leaves the source unchanged and the local copy unpushed (LOCAL_AHEAD next launch, so
+     * it's pushed again). Stopping between 3 and 4 is recognised next launch by the pending push ID
+     * (OWN_PUSH_LANDED) instead of being mistaken for DIVERGED.
+     *
+     * @param pushedBy player name, recorded as lastPushedBy
+     * @return the metadata to write to the source in step 3, and to pass to completePush in step 4
+     */
+    public SharedWorldMetadata beginPush(Path worldDir, String pushedBy)
+            throws IOException, MetadataValidationException {
+        SharedWorldMetadata current = readLocal(worldDir).orElseThrow(() ->
+                new CorruptMetadataException("World " + worldDir + " has no metadata to push"));
+        SharedWorldMetadata next = current.nextPush(pushedBy, Instant.now());
+        save(worldDir, current.withPendingPush(next.lastPushId()));
+        LOGGER.info("Starting push {} of {}: version {} -> {}",
+                next.lastPushId(), worldDir.getFileName(), current.version(), next.version());
+        return next;
+    }
+
+    /**
+     * Step 4 of a push: the source has the new version, so the local copy now matches it.
+     *
+     * @param pushed the metadata returned by beginPush (and written to the source)
+     */
+    public void completePush(Path worldDir, SharedWorldMetadata pushed)
+            throws IOException, MetadataValidationException {
+        save(worldDir, pushed);
+        LOGGER.info("Push {} of {} complete: now at version {}",
+                pushed.lastPushId(), worldDir.getFileName(), pushed.version());
+    }
+
+    /**
      * Builds the WorldSource for a world's source, as declared in its global config entry.
      * This is the only place WorldSources are constructed.
      *
@@ -185,6 +226,10 @@ public class SharedWorldMetadataRegistry {
         }
 
         WorldDecision decision = SharedWorldComparator.decide(local, remote, localLevel, sourceLevel);
+        if (decision == WorldDecision.OWN_PUSH_LANDED) {
+            completePush(localWorldDir, remote.orElseThrow());
+            decision = WorldDecision.UP_TO_DATE;
+        }
         LOGGER.info("World decision: local={}, source={}, decision={}",
                 localWorldDir.getFileName(), source.describe(), decision);
         return decision;

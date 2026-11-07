@@ -6,6 +6,12 @@ package com.cbiv.sharedworlds.config;
 public enum WorldDecision {
     /** Same world, same version, not played here since: launch the local copy. */
     UP_TO_DATE,
+    /**
+     * This computer's own last push reached the source, but the game stopped before the local copy recorded it.
+     * The local files are what was pushed, so only the local metadata needs updating. The registry handles this
+     * and reports UP_TO_DATE, so the coordinator never sees it.
+     */
+    OWN_PUSH_LANDED,
     /** Same world and the source is newer: inject the source, then launch. */
     PULL,
     /** Played here since the last pull/push but not pushed (e.g. the push failed): launch it, keep the lock. */
