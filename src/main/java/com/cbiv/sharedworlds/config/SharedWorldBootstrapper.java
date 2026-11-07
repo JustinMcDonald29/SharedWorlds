@@ -2,7 +2,6 @@ package com.cbiv.sharedworlds.config;
 
 import com.cbiv.sharedworlds.fs.WorldSourceType;
 import com.cbiv.sharedworlds.common.SharedWorldsSchemas;
-import com.cbiv.sharedworlds.common.SharedWorldsFiles;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.slf4j.Logger;
@@ -10,7 +9,6 @@ import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.Reader;
-import java.io.Writer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -40,7 +38,10 @@ public final class SharedWorldBootstrapper {
      * Performs initial configuration bootstrap:
      * - Loads global config
      * - Validates schema compatibility
-     * - Ensures sharedworld.meta.json exists for each configured world
+     * - Warns about configured worlds that don't exist locally
+     *
+     * It never creates sharedworld.meta.json: a world's identity comes from its source (first pull) or is created
+     * the first time it is played as a shared world, never from its folder name (decision 4).
      *
      * This method is intended to be called once during client initialization.
      *
@@ -89,7 +90,7 @@ public final class SharedWorldBootstrapper {
     }
 
     /**
-     * Ensures metadata exists for a single world declared in the global config.
+     * Checks a single world declared in the global config.
      */
     private void bootstrapWorld(
             Path worldDir,
@@ -102,35 +103,7 @@ public final class SharedWorldBootstrapper {
                     entry.id(),
                     worldDir
             );
-            return;
+            // TODO initial setup: pull the world from its source if it's missing locally
         }
-
-        Path metaFile = worldDir.resolve(SharedWorldsFiles.WORLD_METADATA);
-
-        if (Files.exists(metaFile)) {
-            LOGGER.debug(
-                    "Metadata already exists for world '{}' ({})",
-                    entry.id(),
-                    worldDir
-            );
-            return;
-        }
-
-        SharedWorldMetadata metadata =
-                SharedWorldMetadata.initial(
-                        entry.id(),
-                        entry.source().type(),
-                        entry.source().location()
-                );
-
-        try (Writer writer = Files.newBufferedWriter(metaFile)) {
-            gson.toJson(metadata, writer);
-        }
-
-        LOGGER.info(
-                "Created metadata for shared world '{}' at {}",
-                entry.id(),
-                metaFile
-        );
     }
 }
