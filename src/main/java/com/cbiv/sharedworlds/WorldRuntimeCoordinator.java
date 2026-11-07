@@ -15,6 +15,7 @@ import org.slf4j.Logger;
 import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.MetadataValidationException;
 import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
+import com.cbiv.sharedworlds.config.WorldDecision;
 
 public class WorldRuntimeCoordinator {
 
@@ -83,21 +84,46 @@ public class WorldRuntimeCoordinator {
             return true;
         }
 
-        // 4. Decide which copy to run
-        boolean sourceIsNewer;
+        // 4. Check both copies are the same world, then decide which to run.
+        // Whenever the local copy is launched without being confirmed as the current shared world, the lock is
+        // released: holding it would let a later push overwrite the source with the wrong world.
+        WorldDecision decision;
         try {
-            sourceIsNewer = registry.isSourceNewer(worldDir, sourceWorld);
-        } catch (MetadataValidationException e) {
-            // Fail open: launch the local copy rather than risk overwriting it
-            LOGGER.error("Could not compare {} against its source, launching the local copy", worldName, e);
+            decision = registry.decide(worldDir, sourceWorld);
+        } catch (IOException | MetadataValidationException e) {
+            LOGGER.error("Could not compare {} against its source, launching the local copy without the lock",
+                    worldName, e);
+            releaseLock();
             return true;
         }
-        if (sourceIsNewer) {
-            injectSource(worldDir, worldName);
-        } else {
-            LOGGER.info("Local copy of {} is up to date, launching it", worldName);
-        }
 
+        switch (decision) {
+            case UP_TO_DATE -> LOGGER.info("Local copy of {} is up to date, launching it", worldName);
+            case PULL -> {
+                if (!injectSource(worldDir, worldName)) {
+                    releaseLock();
+                }
+            }
+            case LOCAL_AHEAD -> LOGGER.warn("Local copy of {} has changes that were never pushed; launching it "
+                    + "and keeping the lock so they can be pushed", worldName);
+            case DIVERGED -> {
+                // TODO let the player choose which copy to keep
+                LOGGER.warn("Both the local copy of {} and its source changed since they last matched. Launching "
+                        + "the local copy without the lock; neither copy is overwritten", worldName);
+                releaseLock();
+            }
+            case DIFFERENT_WORLD -> {
+                LOGGER.warn("The local {} and its source ({}) are different worlds. Launching the local copy "
+                        + "without the lock; check the source location in sharedworlds.json",
+                        worldName, sourceWorld.describe());
+                releaseLock();
+            }
+            case CANNOT_COMPARE -> {
+                LOGGER.warn("Could not compare {} with its source; launching the local copy without the lock",
+                        worldName);
+                releaseLock();
+            }
+        }
         return true;
     }
 
@@ -154,11 +180,15 @@ public class WorldRuntimeCoordinator {
     /**
      * Replaces the local copy with the source. Fails open: on any error the local copy is left as it was
      * (WorldInjector guarantees this) and launched instead.
+     *
+     * @return true if the source was injected
      */
-    private void injectSource(Path worldDir, String worldName) {
+    private boolean injectSource(Path worldDir, String worldName) {
         LOGGER.info("Source for {} is newer, injecting it from {}", worldName, sourceWorld.describe());
+        boolean injected = false;
         try (WorldMaterialization materialized = sourceWorld.materialize()) {
             WorldInjector.InjectionResult result = injector.inject(materialized.worldDirectory(), worldDir);
+            injected = true;
             LOGGER.info("Injected {}; previous local copy: {}", worldName,
                     result.backup().map(Path::toString).orElse("none"));
         } catch (IOException | RuntimeException e) {
@@ -168,6 +198,15 @@ public class WorldRuntimeCoordinator {
             // The local folder may have been replaced, so its cached metadata is stale either way
             registry.forget(worldDir);
         }
+
+        if (injected) {
+            try {
+                registry.markPulled(worldDir);
+            } catch (IOException | MetadataValidationException e) {
+                LOGGER.error("Could not update the metadata of {} after pulling it", worldName, e);
+            }
+        }
+        return injected;
     }
 
     public Path getWorldDirectory() {
@@ -194,6 +233,16 @@ public class WorldRuntimeCoordinator {
             return;
         }
         this.serverHasRun = true;
+
+        if (this.holdsLock) {
+            // Played as a shared world: flag it as unpushed (so a failed push is noticed next launch), and give it
+            // a world ID if this is the first time it's been shared
+            try {
+                registry.markPlayed(this.activeWorldDir);
+            } catch (IOException | MetadataValidationException e) {
+                LOGGER.error("Could not update the metadata of {}", this.activeWorldDir, e);
+            }
+        }
     }
 
     public boolean isServerStarted() {
@@ -214,8 +263,10 @@ public class WorldRuntimeCoordinator {
      * launch starts clean. The LockManager is kept: it lives for the whole client.
      */
     public void endWorldSession() {
-        // TODO if the world was played (serverHasRun), push it back to its source here. resetSession() below
-        // releases the lock, so the push must finish first: no one may pull a half-written world.
+        // TODO if the world was played (serverHasRun) AND this client holds the lock, push it back to its source
+        // here: version + 1, unpushed cleared. Without the lock the local copy wasn't confirmed as the shared
+        // world, so it must never be pushed. resetSession() below releases the lock, so the push must finish
+        // first: no one may pull a half-written world.
         resetSession();
         this.serverStarted = false;
     }

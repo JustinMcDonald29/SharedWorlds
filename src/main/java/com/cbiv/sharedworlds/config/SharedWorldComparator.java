@@ -1,129 +1,78 @@
 package com.cbiv.sharedworlds.config;
 
-import com.cbiv.sharedworlds.fs.WorldSource;
-import net.minecraft.nbt.NbtCompound;
-import net.minecraft.nbt.NbtIo;
-import net.minecraft.nbt.NbtSizeTracker;
-
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.Instant;
-import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.Optional;
 
-public class SharedWorldComparator {
+/**
+ * Decides which copy of a shared world to run. Pure logic: callers read the metadata and level.dat files.
+ *
+ * Identity first, then version:
+ *  - Both copies have an ID: the IDs must match. Then the version counter and the local unpushed flag decide.
+ *  - Otherwise (first pull, or worlds from before world IDs existed): the seeds must match, then
+ *    level.dat LastPlayed decides.
+ */
+public final class SharedWorldComparator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("SharedWorldComparator");
-    // Placeholder version written by SharedWorldMetadata.initial(); carries no ordering information
-    private static final String UNKNOWN_VERSION = "unknown";
 
-    /**
-     * Determines if the source world is newer than the local world.
-     *
-     * Cascade:
-     *  1. worldVersion, if both sides have a real (non-"unknown") version
-     *  2. source lastPushed vs local lastPulled, if both exist and differ
-     *  3. LastPlayed in level.dat (also used when source metadata is missing)
-     */
-    public static boolean isSourceNewer(Path localWorldDir, SharedWorldMetadata localMetadata,
-                                        WorldSource source, SharedWorldMetadata sourceMetadata) {
+    private SharedWorldComparator() {}
 
-        if (sourceMetadata != null && sourceMetadata.state() != null
-                && localMetadata != null && localMetadata.state() != null) {
-            String sourceVersion = sourceMetadata.state().worldVersion();
-            String localVersion = localMetadata.state().worldVersion();
-
-            // 1. Real versions on both sides
-            if (isKnownVersion(sourceVersion) && isKnownVersion(localVersion)) {
-                // TODO replace with a version counter that only increases, so "different" can't be mistaken for "newer"
-                LOGGER.debug("Comparing WorldVersions: Local={} vs Source={}", localVersion, sourceVersion);
-                return !sourceVersion.equals(localVersion);
-            }
-
-            // 2. Push/pull timestamps. Identical timestamps carry no ordering information, so fall through.
-            String sourcePushed = sourceMetadata.state().lastPushed();
-            String localPulled = localMetadata.state().lastPulled();
-            if (sourcePushed != null && !sourcePushed.isEmpty()
-                    && localPulled != null && !localPulled.isEmpty()) {
-                Instant sourceLast = parseTimestamp(sourcePushed, Instant.EPOCH);
-                Instant localLast = parseTimestamp(localPulled, Instant.EPOCH);
-                if (!sourceLast.equals(localLast)) {
-                    LOGGER.debug("Fallback 1 Comparing Push/Pull: LocalLastPulled={} vs SourceLastPushed={}",
-                            localPulled, sourcePushed);
-                    return sourceLast.isAfter(localLast);
-                }
-            }
+    public static WorldDecision decide(Optional<SharedWorldMetadata> local, Optional<SharedWorldMetadata> source,
+                                       LevelInfo localLevel, LevelInfo sourceLevel) {
+        if (local.isPresent() && source.isPresent()) {
+            return byVersion(local.get(), source.get());
         }
 
-        // 3. level.dat LastPlayed
-        LOGGER.debug("Fallback 2 Comparing level.dat lastPlayed");
-        Instant sourceLevelDat = readSourceLastPlayed(source);
-        Instant localLevelDat = readLocalLastPlayed(localWorldDir);
-        boolean result = sourceLevelDat.isAfter(localLevelDat);
-        LOGGER.info("Fallback 2 comparison result: localLastPlayed={} sourceLastPlayed={} sourceIsNewer={}",
-                localLevelDat,
-                sourceLevelDat,
-                result);
-        return result;
-    }
-
-    private static boolean isKnownVersion(String version) {
-        return version != null && !version.isEmpty() && !UNKNOWN_VERSION.equals(version);
-    }
-
-    /**
-     * Helper to parse timestamps, fallback to Instant.EPOCH if invalid.
-     */
-    private static Instant parseTimestamp(String timestamp, Instant fallback) {
-        if (timestamp == null || timestamp.isEmpty()) return fallback;
-        try {
-            return Instant.parse(timestamp);
-        } catch (Exception e) {
-            return fallback;
+        // At least one copy has no ID: the seed is the only identity check available
+        if (localLevel.seed().isEmpty() || sourceLevel.seed().isEmpty()) {
+            LOGGER.warn("Could not read the seed of both copies, so they can't be confirmed to be the same world");
+            return WorldDecision.CANNOT_COMPARE;
         }
+        if (localLevel.seed().getAsLong() != sourceLevel.seed().getAsLong()) {
+            LOGGER.warn("Seeds differ (local={}, source={}): these are different worlds",
+                    localLevel.seed().getAsLong(), sourceLevel.seed().getAsLong());
+            return WorldDecision.DIFFERENT_WORLD;
+        }
+
+        if (local.isEmpty() && source.isPresent()) {
+            // First pull (decision 4): the local copy takes the source's identity
+            LOGGER.info("Local copy has no world ID and the seeds match: first pull from the source");
+            return WorldDecision.PULL;
+        }
+
+        // The source has no ID (never pushed with world IDs): fall back to level.dat LastPlayed
+        boolean sourceNewer = sourceLevel.lastPlayed().isAfter(localLevel.lastPlayed());
+        boolean playedHere = local.isPresent() && local.get().unpushed();
+        LOGGER.info("No world ID in the source, comparing LastPlayed: local={} source={} sourceNewer={} playedHere={}",
+                localLevel.lastPlayed(), sourceLevel.lastPlayed(), sourceNewer, playedHere);
+        if (playedHere) {
+            return sourceNewer ? WorldDecision.DIVERGED : WorldDecision.LOCAL_AHEAD;
+        }
+        return sourceNewer ? WorldDecision.PULL : WorldDecision.UP_TO_DATE;
     }
 
-    /**
-     * Reads LastPlayed from the local world's level.dat.
-     */
-    private static Instant readLocalLastPlayed(Path worldDir) {
-        Path levelDatPath = worldDir.resolve("level.dat");
-        if (!Files.exists(levelDatPath)) {
-            LOGGER.error("Failed to find level.dat for world {}", worldDir);
-            return Instant.EPOCH;
+    private static WorldDecision byVersion(SharedWorldMetadata local, SharedWorldMetadata source) {
+        if (!local.worldId().equals(source.worldId())) {
+            LOGGER.warn("World IDs differ (local={}, source={}): these are different worlds",
+                    local.worldId(), source.worldId());
+            return WorldDecision.DIFFERENT_WORLD;
         }
-        try (InputStream is = Files.newInputStream(levelDatPath)) {
-            return readLastPlayed(is);
-        } catch (IOException e) {
-            LOGGER.error("Failed to read level.dat for world {}", worldDir, e);
-            return Instant.EPOCH;
-        }
-    }
 
-    /**
-     * Reads LastPlayed from the source world's level.dat, through the WorldSource.
-     */
-    private static Instant readSourceLastPlayed(WorldSource source) {
-        try (InputStream is = source.openLevelDat()) {
-            return readLastPlayed(is);
-        } catch (IOException e) {
-            LOGGER.error("Failed to read level.dat for source {}", source.describe(), e);
-            return Instant.EPOCH;
-        }
-    }
+        long localVersion = local.version();
+        long sourceVersion = source.version();
+        LOGGER.info("Comparing versions: local={} (unpushed={}) source={}",
+                localVersion, local.unpushed(), sourceVersion);
 
-    /**
-     * Reads the LastPlayed timestamp from a compressed level.dat stream.
-     * Uses Optional to handle missing compounds/fields safely.
-     */
-    private static Instant readLastPlayed(InputStream levelDat) throws IOException {
-        NbtCompound root = NbtIo.readCompressed(levelDat, NbtSizeTracker.forLevel());
-        Optional<NbtCompound> dataOpt = root.getCompound("Data");
-        Optional<Long> lastPlayedOpt = dataOpt.flatMap(data -> data.getLong("LastPlayed"));
-        return lastPlayedOpt.map(Instant::ofEpochMilli).orElse(Instant.EPOCH);
+        if (sourceVersion > localVersion) {
+            return local.unpushed() ? WorldDecision.DIVERGED : WorldDecision.PULL;
+        }
+        if (sourceVersion < localVersion) {
+            // The source went backwards (e.g. restored from a backup). Never pull an older version over a newer one.
+            LOGGER.warn("Source version {} is older than the local copy's {}", sourceVersion, localVersion);
+            return WorldDecision.LOCAL_AHEAD;
+        }
+        return local.unpushed() ? WorldDecision.LOCAL_AHEAD : WorldDecision.UP_TO_DATE;
     }
 }

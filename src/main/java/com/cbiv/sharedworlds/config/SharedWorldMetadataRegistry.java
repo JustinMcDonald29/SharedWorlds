@@ -6,7 +6,10 @@ import com.cbiv.sharedworlds.fs.DirectoryWorldSource;
 import com.cbiv.sharedworlds.fs.WorldSource;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.google.gson.JsonParseException;
+import com.google.gson.JsonParser;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,47 +25,63 @@ import java.util.Map;
 import java.util.Optional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.spongepowered.asm.mixin.Unique;
 
 
 /**
  * Runtime registry for SharedWorldMetadata.
- * Owns reading, caching, validating, and writing metadata for worlds.
- * Also provides comparison of local vs source worlds.
+ * Owns reading, caching, validating and writing metadata for worlds, building WorldSources, and deciding which
+ * copy of a shared world to run.
  */
 public class SharedWorldMetadataRegistry {
 
     private static final Gson GSON = new GsonBuilder()
-            .registerTypeHierarchyAdapter(Path.class, new PathTypeAdapter())
             .setPrettyPrinting()
             .create();
 
-    private final Map<Path, SharedWorldMetadata> worldRegistry = new HashMap<>();
-    @Unique
     private static final Logger LOGGER = LoggerFactory.getLogger("SharedWorldMetadataRegistry");
 
+    // Cached local metadata. An empty Optional means "read, and the world has no (current) metadata".
+    private final Map<Path, Optional<SharedWorldMetadata>> worldRegistry = new HashMap<>();
+
     /**
-     * Loads metadata from a world directory and caches it.
+     * Reads a local world's metadata, using the cache if it has been read before.
+     *
+     * @return the metadata, or empty if the world has none, or only metadata from before world IDs (schema 1)
+     * @throws MetadataValidationException if the file exists but is corrupt or from a newer version of the mod
      */
-    public SharedWorldMetadata load(Path worldDir) throws IOException,MetadataValidationException {
-        Path metaFile = worldDir.resolve(SharedWorldsFiles.WORLD_METADATA);
-        LOGGER.debug("Loading metadata for world:{}", worldDir);
-
-        if (!Files.exists(metaFile)) {
-            LOGGER.warn("Metadata file missing for world:{}", worldDir);
-            throw new IOException("Metadata file does not exist: " + metaFile);
-
+    public Optional<SharedWorldMetadata> readLocal(Path worldDir) throws IOException, MetadataValidationException {
+        Optional<SharedWorldMetadata> cached = worldRegistry.get(worldDir);
+        if (cached != null) {
+            return cached;
         }
 
-        try (Reader reader = Files.newBufferedReader(metaFile)) {
-            SharedWorldMetadata metadata = GSON.fromJson(reader, SharedWorldMetadata.class);
-            LOGGER.info("Loaded metadata for world {} (sourceId={}, sourceType={})",
-                    worldDir,
-                    metadata.association().sourceId(),
-                    metadata.association().sourceType());
-            validate(metadata);
-            worldRegistry.put(worldDir, metadata);
-            return metadata;
+        Path metaFile = worldDir.resolve(SharedWorldsFiles.WORLD_METADATA);
+        Optional<SharedWorldMetadata> metadata;
+        if (!Files.exists(metaFile)) {
+            LOGGER.debug("No metadata in local world {}", worldDir);
+            metadata = Optional.empty();
+        } else {
+            try (Reader reader = Files.newBufferedReader(metaFile, StandardCharsets.UTF_8)) {
+                metadata = parse(reader, worldDir.toString());
+            }
+        }
+        worldRegistry.put(worldDir, metadata);
+        return metadata;
+    }
+
+    /**
+     * Reads the source's metadata.
+     *
+     * @return the metadata, or empty if the source has none, or only metadata from before world IDs (schema 1)
+     * @throws MetadataValidationException if the file exists but is corrupt or from a newer version of the mod
+     */
+    public Optional<SharedWorldMetadata> readSource(WorldSource source) throws IOException, MetadataValidationException {
+        Optional<InputStream> stream = source.openMetadata();
+        if (stream.isEmpty()) {
+            return Optional.empty();
+        }
+        try (Reader reader = new InputStreamReader(stream.get(), StandardCharsets.UTF_8)) {
+            return parse(reader, source.describe());
         }
     }
 
@@ -70,21 +89,50 @@ public class SharedWorldMetadataRegistry {
      * Saves metadata to a world directory and updates the cache.
      */
     public void save(Path worldDir, SharedWorldMetadata metadata) throws IOException, MetadataValidationException {
-        validate(metadata);
-        LOGGER.debug("Saving metadata for world: {}", worldDir);
-
+        validate(metadata, worldDir.toString());
         Path metaFile = worldDir.resolve(SharedWorldsFiles.WORLD_METADATA);
-        try (Writer writer = Files.newBufferedWriter(metaFile)) {
+        try (Writer writer = Files.newBufferedWriter(metaFile, StandardCharsets.UTF_8)) {
             GSON.toJson(metadata, writer);
         }
-        LOGGER.info(
-                "Updated metadata for world {} (lastPulled={}, lastPushed={})",
-                worldDir,
-                metadata.state().lastPulled(),
-                metadata.state().lastPushed()
-        );
+        LOGGER.info("Saved metadata for world {} (worldId={}, version={}, unpushed={})",
+                worldDir, metadata.worldId(), metadata.version(), metadata.unpushed());
+        worldRegistry.put(worldDir, Optional.of(metadata));
+    }
 
-        worldRegistry.put(worldDir, metadata);
+    /**
+     * Drops the cached metadata for a world directory, e.g. after its folder was replaced by an injection.
+     * The next lookup reloads it from disk.
+     */
+    public void forget(Path worldDir) {
+        worldRegistry.remove(worldDir);
+    }
+
+    /**
+     * Records that a shared world is being played on this computer: sets its unpushed flag, and gives it a world
+     * ID if it doesn't have one yet (the first time it is played as a shared world).
+     */
+    public void markPlayed(Path worldDir) throws IOException, MetadataValidationException {
+        Optional<SharedWorldMetadata> current = readLocal(worldDir);
+        if (current.isPresent() && current.get().unpushed()) {
+            return;
+        }
+        SharedWorldMetadata metadata = current.orElseGet(() -> {
+            SharedWorldMetadata created = SharedWorldMetadata.createNew();
+            LOGGER.info("World {} has no world ID yet; created {}", worldDir.getFileName(), created.worldId());
+            return created;
+        });
+        save(worldDir, metadata.withUnpushed(true));
+    }
+
+    /**
+     * After a pull the local copy matches the source, so it has nothing unpushed. Normally the source's metadata
+     * already says so; this covers a source without metadata, where the injector kept the local file.
+     */
+    public void markPulled(Path worldDir) throws IOException, MetadataValidationException {
+        Optional<SharedWorldMetadata> current = readLocal(worldDir);
+        if (current.isPresent() && current.get().unpushed()) {
+            save(worldDir, current.get().withUnpushed(false));
+        }
     }
 
     /**
@@ -117,90 +165,94 @@ public class SharedWorldMetadataRegistry {
     }
 
     /**
-     * Drops the cached metadata for a world directory, e.g. after its folder was replaced by an injection.
-     * The next lookup reloads it from disk.
+     * Compares the local copy of a shared world with its source and decides which to run.
+     * See SharedWorldComparator for the rules.
      */
-    public void forget(Path worldDir) {
-        worldRegistry.remove(worldDir);
-    }
+    public WorldDecision decide(Path localWorldDir, WorldSource source)
+            throws IOException, MetadataValidationException {
+        LOGGER.info("Comparing local world {} against source {}", localWorldDir, source.describe());
 
-    /**
-     * Returns cached metadata for a given world directory, or null if not loaded.
-     */
-    public SharedWorldMetadata get(Path worldDir) {
-        return worldRegistry.get(worldDir);
-    }
+        Optional<SharedWorldMetadata> local = readLocal(localWorldDir);
+        Optional<SharedWorldMetadata> remote = readSource(source);
 
-    /**
-     * Compares the local world with its source to determine if the source is newer.
-     * Handles missing source metadata gracefully by falling back to level.dat LastPlayed.
-     *
-     * @param localWorldDir Path to local world directory
-     * @param source        The world's source
-     * @return true if the source world is newer and should be injected
-     */
-    public boolean isSourceNewer(Path localWorldDir, WorldSource source) throws MetadataValidationException {
-        SharedWorldMetadata localMetadata = worldRegistry.get(localWorldDir);
-        SharedWorldMetadata sourceMetadata = null;
-        LOGGER.info("Comparing local world {} against source {}",
-                localWorldDir,
-                source.describe());
-
+        LevelInfo localLevel = readLocalLevel(localWorldDir);
+        LevelInfo sourceLevel;
         try {
-            Optional<InputStream> metadataStream = source.openMetadata();
-            if (metadataStream.isPresent()) {
-                try (Reader reader = new InputStreamReader(metadataStream.get(), StandardCharsets.UTF_8)) {
-                    sourceMetadata = GSON.fromJson(reader, SharedWorldMetadata.class);
-                }
-            }
-        } catch (IOException | JsonParseException e) {
-            // If source metadata can't be read, fall back to level.dat comparison
-            LOGGER.warn("Could not read source metadata for {}, falling back to level.dat comparison",
-                    source.describe(), e);
-            sourceMetadata = null;
+            sourceLevel = LevelDatReader.read(source.openLevelDat(), source.describe());
+        } catch (IOException e) {
+            LOGGER.error("Could not open level.dat of {}", source.describe(), e);
+            sourceLevel = LevelInfo.unknown();
         }
 
-        if (localMetadata == null) {
-            try {
-                localMetadata = load(localWorldDir);
-            } catch (IOException e) {
-                // Local metadata missing, assume local is "newer" to avoid accidental overwrite
-                LOGGER.error(
-                        "Local metadata missing for {}, refusing to overwrite local world",
-                        localWorldDir
-                );
-                return false;
+        WorldDecision decision = SharedWorldComparator.decide(local, remote, localLevel, sourceLevel);
+        LOGGER.info("World decision: local={}, source={}, decision={}",
+                localWorldDir.getFileName(), source.describe(), decision);
+        return decision;
+    }
+
+    private static LevelInfo readLocalLevel(Path worldDir) {
+        Path levelDat = worldDir.resolve("level.dat");
+        try {
+            return LevelDatReader.read(Files.newInputStream(levelDat), worldDir.toString());
+        } catch (IOException e) {
+            LOGGER.error("Could not open level.dat of {}", worldDir, e);
+            return LevelInfo.unknown();
+        }
+    }
+
+    /**
+     * Parses a metadata file. Schema 1 files (before world IDs) carry no identity, so they read as empty.
+     */
+    private static Optional<SharedWorldMetadata> parse(Reader reader, String description)
+            throws MetadataValidationException {
+        JsonObject json;
+        try {
+            JsonElement element = JsonParser.parseReader(reader);
+            if (!element.isJsonObject()) {
+                throw new CorruptMetadataException("Metadata of " + description + " is not a JSON object");
             }
+            json = element.getAsJsonObject();
+        } catch (JsonParseException | IllegalStateException e) {
+            throw new CorruptMetadataException("Metadata of " + description + " is not valid JSON", e);
         }
 
-        boolean result = SharedWorldComparator.isSourceNewer(localWorldDir, localMetadata, source, sourceMetadata);
-        LOGGER.info("World decision: local={}, source={}, inject={}",
-                localWorldDir.getFileName(),
-                source.describe(),
-                result);
-        return result;
+        int schema;
+        try {
+            schema = json.has("schemaVersion") ? json.get("schemaVersion").getAsInt() : -1;
+        } catch (RuntimeException e) {
+            throw new CorruptMetadataException("Metadata of " + description + " has an invalid schemaVersion", e);
+        }
+        if (schema == 1) {
+            LOGGER.info("Metadata of {} is from before world IDs (schema 1); treating the world as having no ID",
+                    description);
+            return Optional.empty();
+        }
+
+        SharedWorldMetadata metadata;
+        try {
+            metadata = GSON.fromJson(json, SharedWorldMetadata.class);
+        } catch (JsonParseException e) {
+            throw new CorruptMetadataException("Metadata of " + description + " could not be read", e);
+        }
+        validate(metadata, description);
+        return Optional.of(metadata);
     }
 
     /**
      * Validates the schema of a metadata object.
      */
-    private void validate(SharedWorldMetadata metadata) throws MetadataValidationException {
+    private static void validate(SharedWorldMetadata metadata, String description) throws MetadataValidationException {
         if (metadata.schemaVersion() != SharedWorldsSchemas.WORLD_METADATA) {
-            LOGGER.error(
-                    "Metadata schema mismatch (expected={}, actual={})",
-                    SharedWorldsSchemas.WORLD_METADATA,
-                    metadata.schemaVersion()
-            );
-
-            throw new SchemaMismatchException(
-                    "Metadata schema version mismatch: expected " +
-                            SharedWorldsSchemas.WORLD_METADATA +
-                            " but got " + metadata.schemaVersion()
-            );
+            LOGGER.error("Metadata schema mismatch for {} (expected={}, actual={})",
+                    description, SharedWorldsSchemas.WORLD_METADATA, metadata.schemaVersion());
+            throw new SchemaMismatchException("Metadata schema version mismatch for " + description
+                    + ": expected " + SharedWorldsSchemas.WORLD_METADATA + " but got " + metadata.schemaVersion());
         }
-        if (metadata.association()==null){
-            LOGGER.error("Missing association block");
-            throw new CorruptMetadataException("Missing association block");
+        if (metadata.worldId() == null) {
+            throw new CorruptMetadataException("Metadata of " + description + " has no worldId");
+        }
+        if (metadata.version() < 0) {
+            throw new CorruptMetadataException("Metadata of " + description + " has a negative version");
         }
     }
 }
