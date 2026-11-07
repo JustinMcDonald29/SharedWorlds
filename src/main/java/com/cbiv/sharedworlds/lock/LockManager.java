@@ -103,6 +103,24 @@ public final class LockManager {
         return instanceId.equals(lock.getInstanceId());
     }
 
+    /**
+     * True if this player took the lock, e.g. in an earlier run that crashed or whose push failed. Lets a player
+     * get back into their own world after a restart instead of being locked out by themselves.
+     */
+    public boolean isOwnedByThisPlayer(Lock lock) {
+        return playerUuid != null && playerUuid.equals(lock.getPlayerUuid());
+    }
+
+    /**
+     * Replaces a lock this player left behind (see isOwnedByThisPlayer) with one for this instance.
+     *
+     * @return true if this client now holds the lock
+     */
+    public boolean reclaim(WorldSource source) throws IOException {
+        source.deleteLock();
+        return tryClaim(source);
+    }
+
     public boolean isStale(Lock lock) {
         return Duration.between(lock.getCreatedAt(), Instant.now())
                 .compareTo(STALE_THRESHOLD) > 0;

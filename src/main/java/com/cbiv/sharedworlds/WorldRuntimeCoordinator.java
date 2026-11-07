@@ -6,6 +6,7 @@ import java.nio.file.Path;
 import java.util.Optional;
 
 import com.cbiv.sharedworlds.common.SharedWorldsFiles;
+import com.cbiv.sharedworlds.fs.WorldBlueprint;
 import com.cbiv.sharedworlds.fs.WorldInjector;
 import com.cbiv.sharedworlds.fs.WorldMaterialization;
 import com.cbiv.sharedworlds.fs.WorldSource;
@@ -14,6 +15,7 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.MetadataValidationException;
+import com.cbiv.sharedworlds.config.SharedWorldMetadata;
 import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
 import com.cbiv.sharedworlds.config.WorldDecision;
 
@@ -146,6 +148,14 @@ public class WorldRuntimeCoordinator {
             this.holdsLock = true;
             return true;
         }
+        if (holder.isPresent() && lockManager.isOwnedByThisPlayer(holder.get())) {
+            LOGGER.warn("{} has a lock you left at {} (a crash or a failed push); taking it back",
+                    worldName, holder.get().getCreatedAt());
+            if (lockManager.reclaim(sourceWorld)) {
+                this.holdsLock = true;
+                return true;
+            }
+        }
 
         // TODO show this on the lock screen instead of only logging it
         if (holder.isPresent()) {
@@ -263,12 +273,51 @@ public class WorldRuntimeCoordinator {
      * launch starts clean. The LockManager is kept: it lives for the whole client.
      */
     public void endWorldSession() {
-        // TODO if the world was played (serverHasRun) AND this client holds the lock, push it back to its source
-        // here: version + 1, unpushed cleared. Without the lock the local copy wasn't confirmed as the shared
-        // world, so it must never be pushed. resetSession() below releases the lock, so the push must finish
-        // first: no one may pull a half-written world.
+        // Only push with the lock held: without it the local copy wasn't confirmed as the current shared world.
+        // resetSession() below releases the lock, so the push must finish first.
+        if (this.serverHasRun && this.holdsLock && !pushWorld()) {
+            // The source may be half-pushed: leave the lock in place (forget it rather than release it)
+            this.holdsLock = false;
+        }
         resetSession();
         this.serverStarted = false;
+    }
+
+    /**
+     * Pushes the active world to its source, in the order described in SharedWorldMetadataRegistry.beginPush.
+     *
+     * @return true if the lock can be released: the push finished, or failed before the source was changed.
+     *         False if it failed partway, leaving the source with files whose version wasn't raised.
+     */
+    private boolean pushWorld() {
+        String worldName = this.activeWorldDir.getFileName().toString();
+        SharedWorldMetadata next;
+        try {
+            next = registry.beginPush(this.activeWorldDir, identity.playerName());
+        } catch (IOException | MetadataValidationException e) {
+            LOGGER.error("Could not start pushing {}; the source wasn't changed. It stays unpushed and will be "
+                    + "pushed after it's next played", worldName, e);
+            return true;
+        }
+
+        try {
+            sourceWorld.pushFiles(this.activeWorldDir, WorldBlueprint.WORLD_ENTRIES);
+            sourceWorld.writeMetadata(registry.serialize(next));
+        } catch (IOException | MetadataValidationException | RuntimeException e) {
+            LOGGER.error("Push of {} to {} failed partway. Keeping the lock so nobody pulls a half-pushed world; "
+                    + "open the world again on this computer to retry", worldName, sourceWorld.describe(), e);
+            return false;
+        }
+
+        try {
+            registry.completePush(this.activeWorldDir, next);
+        } catch (IOException | MetadataValidationException e) {
+            // The source is complete; the next launch recognises this push by its ID (OWN_PUSH_LANDED)
+            LOGGER.error("Pushed {} but could not record it locally; it will be recognised on the next launch",
+                    worldName, e);
+        }
+        LOGGER.info("Pushed {} to {} (now version {})", worldName, sourceWorld.describe(), next.version());
+        return true;
     }
 
     /**
