@@ -1,31 +1,33 @@
 package com.cbiv.sharedworlds.lock;
 
 import com.cbiv.sharedworlds.ClientIdentity;
+import com.cbiv.sharedworlds.fs.WorldSource;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonParseException;
 import com.google.gson.JsonParser;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.util.WorldSavePath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.Reader;
-import java.io.Writer;
-import java.nio.file.Files;
-import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-import static java.nio.file.StandardCopyOption.*;
-
+/**
+ * Owns what a lock MEANS: building one for this client, parsing it, whether it's ours, whether it's stale.
+ * Where the lock is stored is the WorldSource's job: it only reads, creates and deletes the raw lock file,
+ * so checking a lock never requires materializing the world.
+ */
 public final class LockManager {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("LockManager");
-    private static final String LOCK_FILE_NAME = "lock.json";
 
-    // configurable later
+    // configurable later; to be replaced by a heartbeat (decision 2)
     private static final Duration STALE_THRESHOLD = Duration.ofHours(6);
 
     private final UUID instanceId;
@@ -46,73 +48,55 @@ public final class LockManager {
     /* ------------------------------------------------------------
        Public API
        ------------------------------------------------------------ */
-    public Optional<Lock> readLock(Path worldDir) {
-        Path lockPath = lockPath(worldDir);
-        if (!Files.exists(lockPath)){
+
+    /**
+     * Claims the source's lock for this client.
+     *
+     * @return true if this client now holds the lock, false if a lock already exists
+     * @throws IOException if the source can't be reached or the lock can't be written
+     */
+    public boolean tryClaim(WorldSource source) throws IOException {
+        Lock lock = new Lock(instanceId, playerUuid, playerName, Instant.now(), mcVersion, modVersion);
+        boolean claimed = source.tryCreateLock(serialize(lock));
+        if (claimed) {
+            LOGGER.info("Claimed lock in {}", source.describe());
+        }
+        return claimed;
+    }
+
+    /**
+     * Reads the source's lock.
+     *
+     * @return the lock, or empty if there is none OR it exists but can't be parsed. Use tryClaim to find out
+     *         whether a world is free; this is for showing who holds it.
+     */
+    public Optional<Lock> readLock(WorldSource source) throws IOException {
+        Optional<InputStream> stream = source.openLock();
+        if (stream.isEmpty()) {
             return Optional.empty();
         }
-
-        try (Reader reader = Files.newBufferedReader(lockPath)) {
-            JsonElement json = JsonParser.parseReader(reader);
-            return LockSerializer.fromJson(json).result();
-        } catch (Exception e) {
-            LOGGER.error("Failed to read lock file {}", lockPath, e);
-            return Optional.empty();
-        }
+        return parse(stream.get(), source);
     }
 
-    public boolean isLocked(Path worldDir) {
-        return Files.exists(lockPath(worldDir));
-    }
-
-    public boolean createLock(Path worldDir) {
-        Path lockPath = lockPath(worldDir);
-
-        if(Files.exists(lockPath)) {
-            LOGGER.warn("Lock already exists: {}", lockPath);
-            return false;
-        }
-
-        Lock lock = new Lock(
-                instanceId,
-                playerUuid,
-                playerName,
-                Instant.now(),
-                mcVersion,
-                modVersion
-        );
-
-        try {
-            writeAtomically(lockPath,lock);
-            LOGGER.info("Created lock for world {}", worldDir);
-            return true;
-        } catch (IOException e) {
-            LOGGER.error("Failed to create lock file", e);
-            return false;
-        }
-    }
-
-    public boolean deleteLock(Path worldDir) {
-        Path lockPath = lockPath(worldDir);
-
-        Optional<Lock> lock = readLock(worldDir);
-        if(lock.isEmpty()) {
+    /**
+     * Deletes the source's lock, but only if this client holds it.
+     *
+     * @return true if no lock of ours is left, false if the lock belongs to someone else or can't be read
+     */
+    public boolean release(WorldSource source) throws IOException {
+        Optional<InputStream> stream = source.openLock();
+        if (stream.isEmpty()) {
+            LOGGER.warn("No lock to release in {}", source.describe());
             return true;
         }
-
-        if (!isOwnedByThisInstance(lock.get())){
-            LOGGER.warn("Refusing to delete lock not owned by this instance");
+        Optional<Lock> lock = parse(stream.get(), source);
+        if (lock.isEmpty() || !isOwnedByThisInstance(lock.get())) {
+            LOGGER.warn("Refusing to delete a lock in {} not owned by this instance", source.describe());
             return false;
         }
-
-        try {
-            Files.deleteIfExists(lockPath);
-            LOGGER.info("Deleted lock {}", lockPath);
-            return true;
-        } catch (IOException e) {
-            LOGGER.error("Failed to delete lock file", e);
-            return false;
-        }
+        source.deleteLock();
+        LOGGER.info("Released lock in {}", source.describe());
+        return true;
     }
 
     public boolean isOwnedByThisInstance(Lock lock) {
@@ -127,19 +111,28 @@ public final class LockManager {
     /* ------------------------------------------------------------
        Internals
        ------------------------------------------------------------ */
-    private Path lockPath(Path worldDir) {
-        return worldDir.resolve(LOCK_FILE_NAME);
+
+    private static Optional<Lock> parse(InputStream stream, WorldSource source) throws IOException {
+        try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            JsonElement json = JsonParser.parseReader(reader);
+            return LockSerializer.fromJson(json).result();
+        } catch (JsonParseException e) {
+            LOGGER.warn("Lock in {} could not be parsed", source.describe(), e);
+            return Optional.empty();
+        }
     }
 
-    private void writeAtomically(Path lockPath, Lock lock) throws IOException {
-        Path tempFile = lockPath.resolveSibling(lockPath.getFileName() + ".tmp");
-        var jsonResult = LockSerializer.toJson(lock);
-        JsonElement json = jsonResult.result().orElseThrow(() -> new IllegalStateException("Failed to serialize lock"));
-
-        try (Writer writer = Files.newBufferedWriter(tempFile)){
-            LockSerializer.GSON.toJson(json,writer);
+    private static byte[] serialize(Lock lock) throws IOException {
+        Optional<JsonElement> json;
+        try {
+            json = LockSerializer.toJson(lock).result();
+        } catch (RuntimeException e) {
+            // e.g. no player UUID (getUuidOrNull() returned null)
+            throw new IOException("Could not serialize lock", e);
         }
-
-        Files.move(tempFile, lockPath, ATOMIC_MOVE, REPLACE_EXISTING);
+        if (json.isEmpty()) {
+            throw new IOException("Could not serialize lock");
+        }
+        return LockSerializer.GSON.toJson(json.get()).getBytes(StandardCharsets.UTF_8);
     }
 }

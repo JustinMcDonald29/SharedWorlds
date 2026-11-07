@@ -5,6 +5,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Optional;
 
+import com.cbiv.sharedworlds.common.SharedWorldsFiles;
 import com.cbiv.sharedworlds.fs.WorldInjector;
 import com.cbiv.sharedworlds.fs.WorldMaterialization;
 import com.cbiv.sharedworlds.fs.WorldSource;
@@ -29,6 +30,8 @@ public class WorldRuntimeCoordinator {
     private LockManager lockManager;
     private SharedWorldMetadataRegistry registry;
     private WorldSource sourceWorld;
+    // True while this client holds the lock in sourceWorld
+    private boolean holdsLock = false;
 
     public WorldRuntimeCoordinator(ClientIdentity id, GlobalSharedWorldConfig config, WorldInjector injector){
         this.identity = id;
@@ -45,10 +48,10 @@ public class WorldRuntimeCoordinator {
      *         (e.g. the world is locked by another player)
      */
     public boolean beginWorldSession(Path worldDir) {
+        // Clear anything left by a launch that never closed a session (this also releases its lock)
+        resetSession();
         this.activeWorldDir = worldDir;
         this.serverStarted = false;
-        this.serverHasRun = false;
-        this.sourceWorld = null;
         String worldName = worldDir.getFileName().toString();
 
         // 1. Not in this computer's config -> not a shared world, launch as normal
@@ -67,7 +70,18 @@ public class WorldRuntimeCoordinator {
         this.sourceWorld = source.get();
         LOGGER.info("World {} is shared, source: {}", worldName, sourceWorld.describe());
 
-        // TODO 3. if the source is locked, block the launch (return false)
+        // 3. Take the lock in the source before touching anything. Held by someone else -> block the launch
+        try {
+            if (!claimLock(worldName)) {
+                resetSession();
+                return false;
+            }
+        } catch (IOException e) {
+            // Source unreachable (e.g. the drive is offline): fail open and play the local copy without the lock
+            LOGGER.error("Could not reach the lock for {} at {}, launching the local copy without it",
+                    worldName, sourceWorld.describe(), e);
+            return true;
+        }
 
         // 4. Decide which copy to run
         boolean sourceIsNewer;
@@ -79,22 +93,63 @@ public class WorldRuntimeCoordinator {
             return true;
         }
         if (sourceIsNewer) {
-            // TODO once locks live in the source, only inject after the lock has been taken (step 3)
             injectSource(worldDir, worldName);
         } else {
             LOGGER.info("Local copy of {} is up to date, launching it", worldName);
         }
 
-        // Crude local test, carried over from WorldOpenIntercept: locks currently live in the local world
-        // folder, so this only logs and never blocks. Once locks live in the source, a locked world
-        // returns false here.
-        if (lockManager.isLocked(worldDir)) {
-            LOGGER.warn("LOCK FILE DETECTED for world {}", worldDir.getFileName());
-        }
-
         return true;
     }
 
+
+    /**
+     * Claims the lock in sourceWorld for this client.
+     *
+     * @return true if this client now holds the lock, false if another client does
+     * @throws IOException if the source's lock couldn't be read or written
+     */
+    private boolean claimLock(String worldName) throws IOException {
+        if (lockManager.tryClaim(sourceWorld)) {
+            this.holdsLock = true;
+            return true;
+        }
+
+        Optional<Lock> holder = lockManager.readLock(sourceWorld);
+        if (holder.isPresent() && lockManager.isOwnedByThisInstance(holder.get())) {
+            // Left over from an earlier launch in this run whose release failed. It's ours, so keep it
+            this.holdsLock = true;
+            return true;
+        }
+
+        // TODO show this on the lock screen instead of only logging it
+        if (holder.isPresent()) {
+            LOGGER.warn("{} is locked: {} has been hosting it since {}",
+                    worldName, holder.get().getPlayerName(), holder.get().getCreatedAt());
+        } else {
+            LOGGER.warn("{} is locked, but its lock file couldn't be read", worldName);
+        }
+        LOGGER.warn("If nobody is playing {}, delete {} from its shared copy ({})",
+                worldName, SharedWorldsFiles.WORLD_LOCK, sourceWorld.describe());
+        return false;
+    }
+
+    /**
+     * Releases the lock if this client holds it. Failures are logged: the lock is then left for its owner
+     * (or, later, stale-lock handling) to clear.
+     */
+    private void releaseLock() {
+        if (!this.holdsLock || this.sourceWorld == null) {
+            return;
+        }
+        try {
+            if (!lockManager.release(sourceWorld)) {
+                LOGGER.error("Lock in {} was not released", sourceWorld.describe());
+            }
+        } catch (IOException e) {
+            LOGGER.error("Could not release the lock in {}", sourceWorld.describe(), e);
+        }
+        this.holdsLock = false;
+    }
 
     /**
      * Replaces the local copy with the source. Fails open: on any error the local copy is left as it was
@@ -132,14 +187,13 @@ public class WorldRuntimeCoordinator {
         }
         if (!isSameWorld(this.activeWorldDir, serverWorldDir)) {
             // The server is running a world that never went through beginWorldSession (e.g. a newly created
-            // world), so the active session is stale. Drop it rather than lock the wrong world.
+            // world), so the active session is stale. Drop it, releasing its lock.
             LOGGER.warn("Server started world {} but the active session is for {}; discarding stale session",
                     serverWorldDir, this.activeWorldDir);
             resetSession();
             return;
         }
         this.serverHasRun = true;
-        lockManager.createLock(this.activeWorldDir);
     }
 
     public boolean isServerStarted() {
@@ -160,11 +214,8 @@ public class WorldRuntimeCoordinator {
      * launch starts clean. The LockManager is kept: it lives for the whole client.
      */
     public void endWorldSession() {
-        if (this.serverHasRun && this.activeWorldDir != null) {
-            // TODO push the world back to its source here, before releasing the lock. The lock must only be
-            // released once the push has completed, so no one can pull a half-written world.
-            lockManager.deleteLock(this.activeWorldDir);
-        }
+        // TODO if the world was played (serverHasRun), push it back to its source here. resetSession() below
+        // releases the lock, so the push must finish first: no one may pull a half-written world.
         resetSession();
         this.serverStarted = false;
     }
@@ -185,6 +236,7 @@ public class WorldRuntimeCoordinator {
     }
 
     private void resetSession() {
+        releaseLock();
         this.activeWorldDir = null;
         this.sourceWorld = null;
         this.serverHasRun = false;
