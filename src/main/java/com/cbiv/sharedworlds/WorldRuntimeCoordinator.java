@@ -15,6 +15,7 @@ import com.cbiv.sharedworlds.lock.*;
 import org.slf4j.LoggerFactory;
 import org.slf4j.Logger;
 import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
+import com.cbiv.sharedworlds.config.SharedWorldConfigStore;
 import com.cbiv.sharedworlds.config.MetadataValidationException;
 import com.cbiv.sharedworlds.config.SharedWorldMetadata;
 import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
@@ -24,7 +25,7 @@ public class WorldRuntimeCoordinator {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("WorldRuntimeCoordinator");
     private final ClientIdentity identity;
-    private final GlobalSharedWorldConfig config;
+    private final SharedWorldConfigStore configStore;
     private final WorldInjector injector;
 
     private boolean serverStarted = false;
@@ -32,17 +33,21 @@ public class WorldRuntimeCoordinator {
     private boolean serverHasRun = false;
     private Path activeWorldDir;
     private LockManager lockManager;
-    private SharedWorldMetadataRegistry registry;
+    private final SharedWorldMetadataRegistry registry;
     private WorldSource sourceWorld;
     // True while this client holds the lock in sourceWorld
     private boolean holdsLock = false;
 
-    public WorldRuntimeCoordinator(ClientIdentity id, GlobalSharedWorldConfig config, WorldInjector injector){
+    /**
+     * @param registry shared with SharedWorldsService, so both see the same cached metadata
+     */
+    public WorldRuntimeCoordinator(ClientIdentity id, SharedWorldConfigStore configStore,
+                                   SharedWorldMetadataRegistry registry, WorldInjector injector){
         this.identity = id;
-        this.config = config;
+        this.configStore = configStore;
         this.injector = injector;
         this.lockManager = new LockManager(identity);
-        this.registry = new SharedWorldMetadataRegistry();
+        this.registry = registry;
     }
 
     /**
@@ -59,7 +64,7 @@ public class WorldRuntimeCoordinator {
         String worldName = worldDir.getFileName().toString();
 
         // 1. Not in this computer's config -> not a shared world, launch as normal
-        Optional<GlobalSharedWorldConfig.SharedWorldEntry> entry = config.findByLocalName(worldName);
+        Optional<GlobalSharedWorldConfig.SharedWorldEntry> entry = configStore.current().findByLocalName(worldName);
         if (entry.isEmpty()) {
             LOGGER.debug("World {} is not shared", worldName);
             return true;

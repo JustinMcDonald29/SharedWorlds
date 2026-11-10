@@ -1,8 +1,11 @@
 package com.cbiv.sharedworlds;
 
-import com.cbiv.sharedworlds.config.GlobalSharedWorldConfig;
 import com.cbiv.sharedworlds.config.SharedWorldBootstrapper;
+import com.cbiv.sharedworlds.config.SharedWorldConfigStore;
+import com.cbiv.sharedworlds.config.SharedWorldMetadataRegistry;
 import com.cbiv.sharedworlds.fs.WorldInjector;
+import com.cbiv.sharedworlds.service.SharedWorldsService;
+import com.cbiv.sharedworlds.ui.SelectWorldScreenHook;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.SharedConstants;
@@ -19,6 +22,7 @@ public class SharedWorldsClient implements ClientModInitializer{
     private static SharedWorldsClient INSTANCE;
 
     private WorldRuntimeCoordinator coordinator;
+    private SharedWorldsService service;
 
     private static final Logger LOGGER =
             LoggerFactory.getLogger("SharedWorldsClient");
@@ -28,32 +32,41 @@ public class SharedWorldsClient implements ClientModInitializer{
 
     @Override
     public void onInitializeClient() {
-        GlobalSharedWorldConfig config = bootstrap();
+        Path savesDir = resolveSavesDir();
+        SharedWorldConfigStore configStore = SharedWorldConfigStore.load(resolveConfigPath());
+        bootstrap(configStore, savesDir);
         INSTANCE = this;
-        this.coordinator = createCoordinator(config);
+
+        ClientIdentity identity = createIdentity();
+        // One registry for the whole client: the launch code and the in-game actions must share its cache
+        SharedWorldMetadataRegistry registry = new SharedWorldMetadataRegistry();
+        // Staging and backup folders sit next to saves/ (same drive, so the injector's renames are atomic)
+        // but outside it, so they never show up in the world list.
+        WorldInjector injector = new WorldInjector(FabricLoader.getInstance().getGameDir().resolve("sharedworlds"));
+
+        this.coordinator = new WorldRuntimeCoordinator(identity, configStore, registry, injector);
+        this.service = new SharedWorldsService(savesDir, configStore, registry, injector, identity.playerName());
+
+        SelectWorldScreenHook.register();
     }
 
     public static WorldRuntimeCoordinator coordinator() {
         return INSTANCE.coordinator;
     }
 
+    public static SharedWorldsService service() {
+        return INSTANCE.service;
+    }
+
     /**
-     * Runs the one-shot bootstrapper and returns the loaded config. On failure, returns an empty config:
-     * no worlds are treated as shared, so every world launches normally.
+     * Runs the one-shot bootstrapper. Failures are logged and never stop the game.
      */
-    private GlobalSharedWorldConfig bootstrap(){
+    private void bootstrap(SharedWorldConfigStore configStore, Path savesDir){
         try {
-            Path configPath = resolveConfigPath();
-            Path savesDir = resolveSavesDir();
-
-            return new SharedWorldBootstrapper()
-                    .bootstrap(configPath, savesDir);
-
-        } catch (Exception e) {
+            new SharedWorldBootstrapper().bootstrap(configStore.current(), savesDir);
+        } catch (RuntimeException e) {
             LOGGER.error("SharedWorlds failed to bootstrap", e);
-            return GlobalSharedWorldConfig.empty();
         }
-
     }
 
     private Path resolveConfigPath(){
@@ -64,7 +77,7 @@ public class SharedWorldsClient implements ClientModInitializer{
         return FabricLoader.getInstance().getGameDir().resolve("saves");
     }
 
-    private WorldRuntimeCoordinator createCoordinator(GlobalSharedWorldConfig config) {
+    private ClientIdentity createIdentity() {
         MinecraftClient client = MinecraftClient.getInstance();
 
         UUID instanceId = UUID.randomUUID();
@@ -74,20 +87,14 @@ public class SharedWorldsClient implements ClientModInitializer{
         String modVersion = FabricLoader.getInstance()
                 .getModContainer("sharedworlds")
                 .map(c -> c.getMetadata().getVersion().getFriendlyString())
-                .orElse("unknown)");
+                .orElse("unknown");
 
-        ClientIdentity identity = new ClientIdentity(
+        return new ClientIdentity(
                 instanceId,
                 playerUuid,
                 playerName,
                 mcVersion,
                 modVersion
         );
-
-        // Staging and backup folders sit next to saves/ (same drive, so the injector's renames are atomic)
-        // but outside it, so they never show up in the world list.
-        WorldInjector injector = new WorldInjector(FabricLoader.getInstance().getGameDir().resolve("sharedworlds"));
-
-        return new WorldRuntimeCoordinator(identity, config, injector);
     }
 }

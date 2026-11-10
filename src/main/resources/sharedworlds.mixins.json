@@ -5,7 +5,8 @@
 	"mixins": [
 		"WorldOpenIntercept",
 		"WorldCloseHandler",
-		"SessionCloseHandler"
+		"SessionCloseHandler",
+		"WorldDeleteHook"
 	],
 	"injectors": {
 		"defaultRequire": 1
