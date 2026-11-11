@@ -37,6 +37,8 @@ public class WorldRuntimeCoordinator {
     private WorldSource sourceWorld;
     // True while this client holds the lock in sourceWorld
     private boolean holdsLock = false;
+    // Set when the last launch was blocked by someone else's lock, for the locked-out screen
+    private LockedOut lastLockout;
 
     /**
      * @param registry shared with SharedWorldsService, so both see the same cached metadata
@@ -59,6 +61,7 @@ public class WorldRuntimeCoordinator {
     public boolean beginWorldSession(Path worldDir) {
         // Clear anything left by a launch that never closed a session (this also releases its lock)
         resetSession();
+        this.lastLockout = null;
         this.activeWorldDir = worldDir;
         this.serverStarted = false;
         String worldName = worldDir.getFileName().toString();
@@ -81,7 +84,7 @@ public class WorldRuntimeCoordinator {
 
         // 3. Take the lock in the source before touching anything. Held by someone else -> block the launch
         try {
-            if (!claimLock(worldName)) {
+            if (!claimLock(worldName, entry.get().source())) {
                 resetSession();
                 return false;
             }
@@ -152,7 +155,7 @@ public class WorldRuntimeCoordinator {
      * @return true if this client now holds the lock, false if another client does
      * @throws IOException if the source's lock couldn't be read or written
      */
-    private boolean claimLock(String worldName) throws IOException {
+    private boolean claimLock(String worldName, GlobalSharedWorldConfig.Source source) throws IOException {
         if (lockManager.tryClaim(sourceWorld)) {
             this.holdsLock = true;
             return true;
@@ -173,7 +176,7 @@ public class WorldRuntimeCoordinator {
             }
         }
 
-        // TODO show this on the lock screen instead of only logging it
+        this.lastLockout = new LockedOut(worldName, holder.orElse(null), source);
         if (holder.isPresent()) {
             LOGGER.warn("{} is locked: {} has been hosting it since {}",
                     worldName, holder.get().getPlayerName(), holder.get().getCreatedAt());
@@ -233,6 +236,16 @@ public class WorldRuntimeCoordinator {
             }
         }
         return injected;
+    }
+
+    /**
+     * Why the last launch was blocked, if it was blocked by someone else's lock. Cleared once taken, so the
+     * locked-out screen is shown once per blocked launch.
+     */
+    public Optional<LockedOut> takeLastLockout() {
+        Optional<LockedOut> lockout = Optional.ofNullable(this.lastLockout);
+        this.lastLockout = null;
+        return lockout;
     }
 
     public Path getWorldDirectory() {

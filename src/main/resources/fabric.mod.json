@@ -3,17 +3,18 @@
 	"id": "sharedworlds",
 	"version": "${version}",
 	"name": "SharedWorlds",
-	"description": "Mutex Locks for file-synced MineCraft Worlds",
+	"description": "Take turns hosting one Minecraft world, kept in a shared or synced folder. Whoever opens it gets the latest copy; nobody else can host it until they quit.",
 	"authors": [
-		"Me!"
+		"JustinMcDonald29"
 	],
 	"contact": {
-		"homepage": "https://fabricmc.net/",
-		"sources": "https://github.com/FabricMC/fabric-example-mod"
+		"homepage": "https://github.com/JustinMcDonald29/SharedWorlds",
+		"sources": "https://github.com/JustinMcDonald29/SharedWorlds",
+		"issues": "https://github.com/JustinMcDonald29/SharedWorlds/issues"
 	},
 	"license": "CC0-1.0",
 	"icon": "assets/sharedworlds/icon.png",
-	"environment": "*",
+	"environment": "client",
 	"entrypoints": {
 		"main": [
 			"com.cbiv.sharedworlds.SharedWorlds"

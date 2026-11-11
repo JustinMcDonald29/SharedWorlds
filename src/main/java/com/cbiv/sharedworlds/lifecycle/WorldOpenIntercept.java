@@ -1,6 +1,8 @@
 package com.cbiv.sharedworlds.lifecycle;
 
 import com.cbiv.sharedworlds.SharedWorldsClient;
+import com.cbiv.sharedworlds.ui.LockedOutScreen;
+import net.minecraft.client.MinecraftClient;
 import net.minecraft.server.integrated.IntegratedServerLoader;
 import net.minecraft.world.level.storage.LevelStorage;
 import org.slf4j.Logger;
@@ -59,9 +61,12 @@ public class WorldOpenIntercept {
             LOGGER.info("Launch of {} cancelled by SharedWorlds", levelName);
             ci.cancel();
             // onCancel is Minecraft's own way back: it refreshes the world list, or returns to the
-            // title screen for Quick Play.
-            // TODO show the lock screen instead, and run onCancel when the player closes it
+            // title screen for Quick Play. The locked-out screen goes on top and returns to whatever it set.
             onCancel.run();
+            SharedWorldsClient.coordinator().takeLastLockout().ifPresent(lockout -> {
+                MinecraftClient client = MinecraftClient.getInstance();
+                client.setScreen(new LockedOutScreen(lockout, client.currentScreen));
+            });
         }
     }
 }
